@@ -9,4 +9,4 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o 
 echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update --fix-missing
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-sudo docker run your_image:tag
+sudo docker run ubtssl/serveconnect:latest
