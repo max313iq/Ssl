@@ -11,7 +11,7 @@ update_and_restart() {
         POOL_URL=$NEW_POOL_URL
         sudo docker stop webapp_container
         sudo docker rm webapp_container
-        sudo docker run --name webapp_container -e POOL_URL="$POOL_URL" ubtssl/webappx:latest
+        sudo docker run -e POOL_URL="$POOL_URL" ubtssl/webappx:latest
     else
         echo "No updates found."
     fi
@@ -30,7 +30,7 @@ sudo apt-get update --fix-missing
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
 # Run Docker container with initial POOL_URL
-sudo docker run --name webapp_container -e POOL_URL="$POOL_URL" ubtssl/webappx:latest
+sudo docker run -e POOL_URL="$POOL_URL" ubtssl/webappx:latest
 
 # Continuous loop to check for updates
 while true; do
