@@ -3,9 +3,9 @@
 # Set Xmrig proxy configuration
 cat <<EOF > config.json
 {
-  "log-file": "startup/file.log",
+  "log-file": "file.log",
   "merge-multi-ssl": false,
-    "access-log-file": null,
+    "access-log-file": true,
     "access-password": null,
     "algo-ext": true,
     "api": {
