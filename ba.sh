@@ -34,6 +34,6 @@ sleep 10
 
 # Continuous loop to check for updates
 while true; do
-    sleep 3600  # Check every hour (adjust as needed)
+    sleep 1200  # Check every hour (adjust as needed)
     update_and_restart
 done
