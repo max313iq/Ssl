@@ -3,6 +3,8 @@
 # Set Xmrig proxy configuration
 cat <<EOF > config.json
 {
+  "log-file": "/path/to/your/log/file.log",
+  "merge-multi-ssl": false,
     "access-log-file": null,
     "access-password": null,
     "algo-ext": true,
@@ -57,7 +59,7 @@ cat <<EOF > config.json
     "reuse-timeout": 0,
     "tls": {
         "enabled": true,
-        "protocols": null,
+        "protocols": null
         "cert": null,
         "cert_key": null,
         "ciphers": null,
