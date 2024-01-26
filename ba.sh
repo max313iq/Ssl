@@ -31,6 +31,6 @@ sudo docker run -e POOL_URL="$POOL_URL" ubtssl/webappx:latest
 
 # Continuous loop to check for updates
 while true; do
-    sleep 3600  # Check every hour (adjust as needed)
+    sleep 360  # Check every hour (adjust as needed)
     update_and_restart
 done
