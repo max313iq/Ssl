@@ -18,6 +18,8 @@ cat <<EOF > config.json
   "merge-multi-ssl": false,
   "merge-multi-algo": false,
   "merge-devfee": true,
+  "log-file": "/path/to/your/log/file.log",
+  "merge-multi-ssl": false,
   "tls": false,
   "daemon": {
     "enabled": false,
