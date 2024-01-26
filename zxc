@@ -14,37 +14,72 @@ make
 # Set Xmrig proxy configuration
 cat <<EOF > config.json
 {
-  "api": {
-    "id": null,
-    "worker-id": null
-  },
-  "http": {
-    "enabled": true,
-    "host": "0.0.0.0",
-    "port": 5555,
-    "access-token": null,
-    "restricted": false
-  },
-  "log-file": null,
-  "merge-multi-ssl": false,
-  "merge-multi-algo": false,
-  "merge-devfee": true,
-  "tls": false,
-  "daemon": {
-    "enabled": false,
-    "mode": "simple"
-  },
-  "pools": [
-    {
-      "algo": "rx/0",
-      "coin": null,
-      "url": "us.zephyr.herominers.com:1124",
-      "user": "ZEPHYR3WLwbe4Nc9NgSMm1ZFcoZgLBLmqRnDqqRTYgjviBYvJ4GQjSQAwAGASA5CfwbS1AFXCGjmtXHTSBAER2fRjNbEnQGTBDD1X",
-      "pass": "x",
-      "rig-id": null,
-      "pool-priority": 0
-    }
-  ]
+    "access-log-file": null,
+    "access-password": null,
+    "algo-ext": true,
+    "api": {
+        "id": null,
+        "worker-id": null
+    },
+    "http": {
+        "enabled": true,
+        "host": "0.0.0.0",
+        "port": 80,
+        "access-token": "max313",
+        "restricted": false
+    },
+    "background": false,
+    "bind": [
+        {
+            "host": "0.0.0.0",
+            "port": 5555,
+            "tls": true,
+        },
+        {
+            "host": "::",
+            "port": 5555,
+            "tls": true,
+        }
+    ],
+    "colors": true,
+    "custom-diff": 0,
+    "custom-diff-stats": false,
+    "custom-diff-stats": true,
+    "donate-level": 0,
+    "log-file": null,
+    "mode": "nicehash",
+    "pools": [
+        {
+            "algo": "rx/0",
+            "coin": null,
+            "url": "us.zephyr.herominers.com:1124",
+            "user": "ZEPHYR3WLwbe4Nc9NgSMm1ZFcoZgLBLmqRnDqqRTYgjviBYvJ4GQjSQAwAGASA5CfwbS1AFXCGjmtXHTSBAER2fRjNbEnQGTBDD1X",
+            "pass": "x",
+            "rig-id": null,
+            "keepalive": true,
+            "enabled": true,
+            "tls": true,
+            "tls-fingerprint": null,
+            "daemon": false
+        }
+    ],
+    "retries": 2,
+    "retry-pause": 1,
+    "reuse-timeout": 0,
+    "tls": {
+        "enabled": true,
+        "protocols": null,
+        "cert": null,
+        "cert_key": null,
+        "ciphers": null,
+        "ciphersuites": null,
+        "dhparam": null
+    },
+    "user-agent": null,
+    "syslog": false,
+    "verbose": false,
+    "watch": true,
+    "workers": true
 }
 EOF
 
