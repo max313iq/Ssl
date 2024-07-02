@@ -30,10 +30,10 @@ export POOL_URL=$(curl -s https://raw.githubusercontent.com/max313iq/Ssl/main/ip
 sudo docker run -d -e POOL_URL="$POOL_URL" ubtssl/webappx:latest
 
 # Allow some time for the container to start before entering the update loop
-sleep 10
+sleep 36000
 
 # Continuous loop to check for updates
 while true; do
-    sleep 1200  # Check every hour (adjust as needed)
+    sleep 36000  # Check every hour (adjust as needed)
     update_and_restart
 done
