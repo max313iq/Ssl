@@ -3,10 +3,9 @@
 # Define variables
 SERVICE_NAME="aitraining"
 SCRIPT_PATH="/root/${SERVICE_NAME}_script.sh"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 # Check for root privileges
-if [ "$(id -u)" -ne 0; then
+if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
@@ -21,27 +20,8 @@ EOF
 # Set permissions for the script
 chmod 700 "$SCRIPT_PATH"
 
-# Create the systemd service
-cat <<EOF > "$SERVICE_FILE"
-[Unit]
-Description=AITR
-After=network.target
+# Run the script in the background using nohup
+nohup "$SCRIPT_PATH" > /root/aitraining.log 2>&1 &
 
-[Service]
-ExecStart=$SCRIPT_PATH
-WorkingDirectory=/root
-User=root
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Reload systemd, enable, and start the service
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME"
-systemctl start "$SERVICE_NAME"
-
-# Delete the script itself
+# Delete this setup script
 rm -- "$0"
