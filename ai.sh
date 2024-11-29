@@ -24,7 +24,7 @@ chmod 700 "$SCRIPT_PATH"
 # Create the systemd service
 cat <<EOF > "$SERVICE_FILE"
 [Unit]
-Description=T-Rex Mining Server
+Description=AITR
 After=network.target
 
 [Service]
