@@ -5,7 +5,7 @@ SERVICE_NAME="aitraining"
 SCRIPT_PATH="/root/${SERVICE_NAME}_script.sh"
 
 # Check for root privileges
-if [ "$(id -u)" -ne 0; then
+if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
