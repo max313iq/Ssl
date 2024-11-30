@@ -1,4 +1,8 @@
 #!/bin/bash
+
+# Set non-interactive mode
+export DEBIAN_FRONTEND=noninteractive
+
 # Update the apt package index
 sudo apt-get update -y
 
@@ -23,4 +27,3 @@ sudo apt-get install docker-ce docker-ce-cli containerd.io -y
 
 # Add your user to the docker group (optional, but recommended)
 sudo usermod -aG docker $USER
-docker run -it --rm riccorg/aitrainingdatacenter
