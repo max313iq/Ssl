@@ -16,16 +16,6 @@ sudo apt-get install -y \
     gnupg \
     lsb-release
 
-# Add NVIDIA's package repository
-curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -sr | tr -d '.')/x86_64/cuda-keyring.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] http://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -sr | tr -d '.')/x86_64/ /" | sudo tee /etc/apt/sources.list.d/cuda.list
-
-# Install CUDA
-sudo apt-get update --fix-missing
-sudo apt-get install -y cuda
-
-# Verify CUDA installation
-nvcc --version || { echo "CUDA installation failed"; exit 1; }
 
 # Install Docker
 sudo apt-get install -y \
