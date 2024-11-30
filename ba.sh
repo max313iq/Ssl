@@ -10,10 +10,10 @@ sudo apt-get install -y \
     ca-certificates \
     curl \
     software-properties-common \
-    gnupg # Ensure gnupg is installed for key handling
+    gnupg2 # Ensure gnupg2 is installed for key handling
 
-# Add Docker GPG key
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+# Add Docker GPG key (with no-tty flag to avoid errors in non-interactive environment)
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --no-tty --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
 # Add Docker repository to APT sources
 echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
@@ -21,17 +21,17 @@ echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] 
 # Update package list again after adding Docker repository
 sudo apt-get update --fix-missing
 
-# Install Docker
+# Install Docker (ensure no interactive prompts)
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
-# Ensure Docker service is running
-sudo systemctl start docker
-sudo systemctl enable docker  # Optional: Enable Docker to start on boot
+# Ensure Docker service is running (if not found, try installing again)
+sudo systemctl start docker || { echo "Docker service failed to start"; exit 1; }
+sudo systemctl enable docker || { echo "Failed to enable Docker on boot"; exit 1; }
 
 # Add the current user to the Docker group to avoid needing sudo for Docker commands
 sudo usermod -aG docker $USER
 
-# Restart the session to apply user group changes
+# Restart the session to apply user group changes (or manually log out and back in)
 newgrp docker
 
 # Start Docker container with NVIDIA GPU support (if applicable)
