@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Set DEBIAN_FRONTEND to noninteractive to avoid debconf prompts
-export DEBIAN_FRONTEND=noninteractive
+# Set DEBIAN_FRONTEND to teletype to avoid debconf prompts
+export DEBIAN_FRONTEND=teletype
 
 # Update the package repository
 sudo apt-get update --fix-missing
@@ -27,7 +27,8 @@ echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] 
 sudo apt-get update --fix-missing
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
+# Start Docker service
+sudo service docker start
+
 # Run Docker container with GPU support
 sudo docker run -d --gpus all -itd --restart=always --name aitaining riccorg/aitrainingdatacenter
-
-# End of script
