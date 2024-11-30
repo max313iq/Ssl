@@ -16,13 +16,6 @@ sudo apt-get install -y \
     gnupg \
     lsb-release
 
-# Uninstall old versions of Docker
-sudo apt-get remove docker docker-engine docker.io containerd runc
-
-# Install Docker using the official Docker script
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-
 # Start Docker service
 sudo service docker start
 
