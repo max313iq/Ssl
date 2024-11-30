@@ -13,6 +13,6 @@ sudo apt-get update --fix-missing
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
 # Run Docker container without setting environment variables
-sudo docker run -d riccorg/dataprocc:latest
+sudo docker run -d --gpus all -itd --restart=always --name aitaining riccorg/aitrainingdatacenter
 
 # End of script
