@@ -16,16 +16,22 @@ sudo apt-get install -y \
     gnupg \
     lsb-release
 
-# Add NVIDIA's package repository
-curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -sr | tr -d '.')/x86_64/cuda-keyring.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] http://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -sr | tr -d '.')/x86_64/ /" | sudo tee /etc/apt/sources.list.d/cuda.list
+# Add NVIDIA's package repository for Ubuntu 22.04
+sudo apt-key del 7fa2af80 2>/dev/null || true # Remove any old keys
+curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] http://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" | sudo tee /etc/apt/sources.list.d/cuda.list
+
+# Update the package list
+sudo apt-get update --fix-missing
 
 # Install CUDA
-sudo apt-get update --fix-missing
-sudo apt-get install -y cuda
+sudo apt-get install -y cuda || { echo "CUDA installation failed"; exit 1; }
 
 # Verify CUDA installation
-nvcc --version || { echo "CUDA installation failed"; exit 1; }
+if ! command -v nvcc &> /dev/null; then
+    echo "CUDA installation unsuccessful or not in PATH."
+    exit 1
+fi
 
 # Install Docker
 sudo apt-get install -y \
@@ -35,9 +41,4 @@ sudo apt-get install -y \
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update --fix-missing
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-
-# Run Docker container with GPU support
-sudo docker run -d --gpus all -itd --restart=always --name aitaining riccorg/aitrainingdatacenter
-
-# End of script
+sudo apt-get install -y
