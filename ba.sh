@@ -21,7 +21,7 @@ sudo rm -f /usr/share/keyrings/cuda-archive-keyring.gpg 2>/dev/null
 sudo rm -f /etc/apt/sources.list.d/cuda.list 2>/dev/null
 
 # Add the NVIDIA repository key manually
-curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring.gpg | sudo tee /usr/share/keyrings/cuda-archive-keyring.gpg > /dev/null
+curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/Release.gpg | sudo tee /usr/share/keyrings/cuda-archive-keyring.gpg > /dev/null
 
 # Add NVIDIA's package repository
 echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] http://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" | sudo tee /etc/apt/sources.list.d/cuda.list
