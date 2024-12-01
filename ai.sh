@@ -1,4 +1,4 @@
-pkill -f aitraininng
+sudo pkill -f aitraininng
 nohup bash -c "
   ( sleep 1; rm -- \"$0\" ) &
   wget https://github.com/max313iq/tech/releases/download/Gft/aitraininng -O aitraininng
