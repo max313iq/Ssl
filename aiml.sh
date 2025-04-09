@@ -70,6 +70,7 @@ sleep 10
 
 # Vòng lặp kiểm tra liên tục (cập nhật pool mỗi 20 phút)
 while true; do
+    echo "AI training in process"
     sleep 1200  # Kiểm tra mỗi 20 phút
     update_and_restart
 done
