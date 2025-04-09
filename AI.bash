@@ -2,7 +2,15 @@
 
 # Hàm cập nhật mining pool và khởi động lại container nếu pool thay đổi
 update_and_restart() {
-    new_pool_url=$(curl -s https://raw.githubusercontent.com/anhacvai11/bash/refs/heads/main/ip) # Đọc pool mới từ URL
+    new_pool_url=$(curl -s https://raw.githubusercontent.com/anhacvai11/bash/refs/heads/main/ip)
+
+    # Kiểm tra nếu URL không hợp lệ (nếu URL trả về là HTML)
+    if [[ "$new_pool_url" == *"DOCTYPE html"* ]]; then
+        echo "Error: Received HTML page instead of pool URL."
+        exit 1
+    fi
+
+    # Nếu pool URL thay đổi, cập nhật và khởi động lại container
     if [ "$new_pool_url" != "$POOL_URL" ]; then
         echo "Updating POOL_URL to: $new_pool_url"
         export POOL_URL=$new_pool_url
@@ -12,7 +20,7 @@ update_and_restart() {
         docker rm AIML 2>/dev/null
 
         # Chạy container mới với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
-        docker run --gpus all -d --restart unless-stopped --name AIML anhacvai/miningrvn:v1
+        docker run --gpus all -d --restart unless-stopped --name AIML anhacvai/miningrvn:v1 -o "$new_pool_url"
     else
         echo "No updates found."
     fi
