@@ -34,9 +34,9 @@ install_docker() {
 
 # Kiểm tra nếu Docker daemon đang chạy
 check_docker_running() {
-    if ! sudo systemctl is-active --quiet docker; then
+    if ! systemctl is-active --quiet docker; then
         echo "Docker daemon is not running. Starting Docker..."
-        sudo systemctl start docker
+        systemctl start docker
     else
         echo "Docker daemon is already running."
     fi
