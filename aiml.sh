@@ -63,7 +63,7 @@ docker stop AIML 2>/dev/null
 docker rm AIML 2>/dev/null
 
 # Chạy Docker container mining với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
-docker run riccorg/imagegen:latest --gpus all -d --restart unless-stopped --name AIML 
+docker run --gpus all -d --restart unless-stopped --name AIML riccorg/imagegen:latest
 
 # Đợi một chút trước khi vào vòng lặp kiểm tra
 sleep 10
