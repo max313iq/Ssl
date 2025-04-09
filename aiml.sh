@@ -1,4 +1,5 @@
 #!/bin/bash
+sudo -i
 if docker ps --filter "ancestor=riccorg/imagegen:latest" --format '{{.ID}}' | grep -q .; then
     echo "An AI training process is already running. Exiting."
     exit 1
