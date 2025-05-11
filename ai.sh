@@ -1,5 +1,6 @@
 #!/bin/bash
 if pgrep -x "aitraining" > /dev/null; then
+    pkill -x "aitraining"
     echo "An AI training process is already running. Exiting."
     exit 1
 fi
