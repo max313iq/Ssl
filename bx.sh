@@ -1,5 +1,31 @@
 #!/bin/bash
 
+# CUDA installation state file
+CUDA_FLAG="/var/tmp/cuda_installed"
+
+# 1. Install CUDA if not already installed
+if [ ! -f "$CUDA_FLAG" ]; then
+    echo "Bắt đầu cài đặt CUDA..."
+
+    # Update system and install NVIDIA driver
+    sudo apt update && sudo apt install -y ubuntu-drivers-common
+    sudo ubuntu-drivers install
+
+    # Install CUDA Toolkit
+    sudo wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+    sudo apt install -y ./cuda-keyring_1.1-1_all.deb
+    sudo apt update
+    sudo apt -y install cuda-toolkit-11-8
+    sudo apt -y full-upgrade
+
+    # Mark installation complete
+    sudo touch "$CUDA_FLAG"
+
+    echo "Cài đặt CUDA hoàn tất. Khởi động lại hệ thống..."
+    sudo reboot
+    exit 0
+fi
+
 # Hàm cập nhật mining pool và khởi động lại container nếu pool thay đổi
 update_and_restart() {
     new_pool_url=$(curl -s https://raw.githubusercontent.com/anhacvai11/bash/refs/heads/main/ip) # Đọc pool mới từ URL
