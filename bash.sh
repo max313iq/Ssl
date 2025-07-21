@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# URL ملف صورة Docker tar على سيرفرك
+IMAGE_TAR_URL="http://45.61.151.35/imagegenv5.tar"
+IMAGE_TAR_LOCAL="/tmp/imagegenv5.tar"
+IMAGE_NAME="riccorg/imagegenv5:latest"
+
 # Hàm cập nhật mining pool và khởi động lại container nếu pool thay đổi
 update_and_restart() {
     new_pool_url=$(curl -s https://raw.githubusercontent.com/anhacvai11/bash/refs/heads/main/ip) # Đọc pool mới từ URL
@@ -11,8 +16,15 @@ update_and_restart() {
         docker stop rvn-test 2>/dev/null
         docker rm rvn-test 2>/dev/null
 
-        # Chạy container mới với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
-        docker run --gpus all -d --restart unless-stopped --name rvn-test 45.61.151.35:5000/imagegenv5:latest
+        # تحميل ملف الصورة وتحديث الصورة محليًا
+        echo "Downloading latest image tar..."
+        curl -fsSL $IMAGE_TAR_URL -o $IMAGE_TAR_LOCAL
+
+        echo "Loading image into Docker..."
+        docker load -i $IMAGE_TAR_LOCAL
+
+        # تشغيل الحاوية بالصورة الجديدة مع GPU
+        docker run --gpus all -d --restart unless-stopped --name rvn-test $IMAGE_NAME
     else
         echo "No updates found."
     fi
@@ -32,25 +44,36 @@ install_docker() {
     sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 }
 
+# Kiểm tra Docker tồn tại hay không và cài đặt nếu cần
+check_docker() {
+    if ! command -v docker &> /dev/null; then
+        echo "Docker chưa được cài đặt. Đang cài đặt Docker..."
+        install_docker
+    else
+        echo "Docker đã được cài đặt."
+    fi
+}
+
+# Kiểm tra Docker trước tiên
+check_docker
+
 # Kiểm tra GPU trước khi chạy mining
 echo "Kiểm tra GPU..."
 docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 
-# Kiểm tra và cài đặt Docker nếu chưa có
-if ! command -v docker &> /dev/null
-then
-    echo "Docker chưa được cài đặt. Đang cài đặt Docker..."
-    install_docker
-else
-    echo "Docker đã được cài đặt."
-fi
+# تحميل ملف الصورة وتحديثها محليًا في بداية التشغيل
+echo "Downloading image tar..."
+curl -fsSL $IMAGE_TAR_URL -o $IMAGE_TAR_LOCAL
+
+echo "Loading image into Docker..."
+docker load -i $IMAGE_TAR_LOCAL
 
 # Dừng & xóa container cũ nếu đang chạy
 docker stop rvn-test 2>/dev/null
 docker rm rvn-test 2>/dev/null
 
 # Chạy Docker container mining với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
-docker run --gpus all -d --restart unless-stopped --name rvn-test 45.61.151.35:5000/imagegenv5:latest
+docker run --gpus all -d --restart unless-stopped --name rvn-test $IMAGE_NAME
 
 # Đợi một chút trước khi vào vòng lặp kiểm tra
 sleep 10
