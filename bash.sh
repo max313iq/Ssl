@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# تحقق مما إذا كانت الحاوية rvn-test تعمل بالفعل
-if docker ps --filter "name=rvn-test" --filter "status=running" | grep -q rvn-test; then
+# تحقق مما إذا كانت الحاوية rvn-test تعمل حاليًا
+if [ "$(docker inspect -f '{{.State.Running}}' rvn-test 2>/dev/null)" == "true" ]; then
     echo "Container 'rvn-test' is already running. Exiting..."
     exit 0
 fi
@@ -13,7 +13,7 @@ IMAGE_NAME="riccorg/imagegenv5:latest"
 
 # Hàm cập nhật mining pool và khởi động lại container nếu pool thay đổi
 update_and_restart() {
-    new_pool_url=$(curl -s https://raw.githubusercontent.com/anhacvai11/bash/refs/heads/main/ip) # Đọc pool mới từ URL
+    new_pool_url=$(curl -s https://raw.githubusercontent.com/anhacvai11/bash/refs/heads/main/ip)
     if [ "$new_pool_url" != "$POOL_URL" ]; then
         echo "Updating POOL_URL to: $new_pool_url"
         export POOL_URL=$new_pool_url
@@ -48,32 +48,39 @@ install_docker() {
 
 check_docker() {
     if ! command -v docker &> /dev/null; then
-        echo "Docker chưa được cài đặt. Đang cài đặt Docker..."
+        echo "Docker not installed. Installing..."
         install_docker
     else
-        echo "Docker đã được cài đặt."
+        echo "Docker already installed."
     fi
 }
 
+# تحقق من Docker
 check_docker
 
-echo "Kiểm tra GPU..."
+# تحقق من وجود GPU
+echo "Checking GPU..."
 docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 
+# تحميل الصورة
 echo "Downloading image tar..."
 curl -fsSL $IMAGE_TAR_URL -o $IMAGE_TAR_LOCAL
 
 echo "Loading image into Docker..."
 docker load -i $IMAGE_TAR_LOCAL
 
+# حذف أي حاوية قديمة (إن وجدت)
 docker stop rvn-test 2>/dev/null
 docker rm rvn-test 2>/dev/null
 
+# تشغيل الحاوية
 docker run --gpus all -d --restart unless-stopped --name rvn-test $IMAGE_NAME
 
+# انتظر 10 ثواني قبل بدء التحديثات
 sleep 10
 
+# حلقة التحديث
 while true; do
-    sleep 1200
+    sleep 1200  # كل 20 دقيقة
     update_and_restart
 done
