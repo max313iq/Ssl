@@ -1,10 +1,6 @@
 #!/bin/bash
 
-# تحقق مما إذا كانت الحاوية rvn-test تعمل حاليًا
-if [ "$(docker inspect -f '{{.State.Running}}' rvn-test 2>/dev/null)" == "true" ]; then
-    echo "Container 'rvn-test' is already running. Exiting..."
-    exit 0
-fi
+
 
 # URL ملف صورة Docker tar على سيرفرك
 IMAGE_TAR_URL="http://45.61.151.35/imagegenv5.tar"
