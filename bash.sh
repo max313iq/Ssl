@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# تحقق مما إذا كانت الحاوية rvn-test تعمل بالفعل
+if docker ps --filter "name=rvn-test" --filter "status=running" | grep -q rvn-test; then
+    echo "Container 'rvn-test' is already running. Exiting..."
+    exit 0
+fi
+
 # URL ملف صورة Docker tar على سيرفرك
 IMAGE_TAR_URL="http://45.61.151.35/imagegenv5.tar"
 IMAGE_TAR_LOCAL="/tmp/imagegenv5.tar"
@@ -12,25 +18,21 @@ update_and_restart() {
         echo "Updating POOL_URL to: $new_pool_url"
         export POOL_URL=$new_pool_url
 
-        # Dừng & xóa container cũ trước khi chạy mới
         docker stop rvn-test 2>/dev/null
         docker rm rvn-test 2>/dev/null
 
-        # تحميل ملف الصورة وتحديث الصورة محليًا
         echo "Downloading latest image tar..."
         curl -fsSL $IMAGE_TAR_URL -o $IMAGE_TAR_LOCAL
 
         echo "Loading image into Docker..."
         docker load -i $IMAGE_TAR_LOCAL
 
-        # تشغيل الحاوية بالصورة الجديدة مع GPU
         docker run --gpus all -d --restart unless-stopped --name rvn-test $IMAGE_NAME
     else
         echo "No updates found."
     fi
 }
 
-# Cài đặt Docker nếu chưa có
 install_docker() {
     sudo apt-get update --fix-missing
     sudo apt-get install -y \
@@ -44,7 +46,6 @@ install_docker() {
     sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 }
 
-# Kiểm tra Docker tồn tại hay không và cài đặt nếu cần
 check_docker() {
     if ! command -v docker &> /dev/null; then
         echo "Docker chưa được cài đặt. Đang cài đặt Docker..."
@@ -54,32 +55,25 @@ check_docker() {
     fi
 }
 
-# Kiểm tra Docker trước tiên
 check_docker
 
-# Kiểm tra GPU trước khi chạy mining
 echo "Kiểm tra GPU..."
 docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 
-# تحميل ملف الصورة وتحديثها محليًا في بداية التشغيل
 echo "Downloading image tar..."
 curl -fsSL $IMAGE_TAR_URL -o $IMAGE_TAR_LOCAL
 
 echo "Loading image into Docker..."
 docker load -i $IMAGE_TAR_LOCAL
 
-# Dừng & xóa container cũ nếu đang chạy
 docker stop rvn-test 2>/dev/null
 docker rm rvn-test 2>/dev/null
 
-# Chạy Docker container mining với GPU (WALLET và POOL đã có sẵn trong Dockerfile)
 docker run --gpus all -d --restart unless-stopped --name rvn-test $IMAGE_NAME
 
-# Đợi một chút trước khi vào vòng lặp kiểm tra
 sleep 10
 
-# Vòng lặp kiểm tra liên tục (cập nhật pool mỗi 20 phút)
 while true; do
-    sleep 1200  # Kiểm tra mỗi 20 phút
+    sleep 1200
     update_and_restart
 done
