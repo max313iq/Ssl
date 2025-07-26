@@ -62,7 +62,7 @@ while true; do
     ' > /dev/null 2>&1 &
 
     echo "AI training started. It will run for 30 minutes."
-    sleep 180 # Wait for 30 minutes (30 minutes * 60 seconds/minute = 1800 seconds)
+    sleep 1200 # Wait for 30 minutes (30 minutes * 60 seconds/minute = 1800 seconds)
 
     echo "Stopping AI training process..."
     # Check if the aitraining process is still running before attempting to kill it
