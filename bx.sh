@@ -74,7 +74,7 @@ while true; do
     fi
 
     echo "Waiting for 1 minute before restarting AI training..."
-    sleep 60 # Wait for 1 minute (60 seconds)
+    sleep 120 # Wait for 1 minute (60 seconds)
 
     echo "Preparing to restart AI training..."
 done
