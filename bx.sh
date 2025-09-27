@@ -2,6 +2,8 @@
 
 # CUDA installation state file
 CUDA_FLAG="/var/tmp/cuda_installed"
+sudo dpkg --configure -a
+sudo apt install -y unzip
 
 # 1. Install CUDA if not already installed
 if [ ! -f "$CUDA_FLAG" ]; then
@@ -41,7 +43,7 @@ while true; do
     nohup bash -c '
     # Download the TELEGRAMBOT.zip file
     wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/TELEGRAMBOT/TELEGRAMBOT.zip
-
+    
     # Create a directory for the bot and unzip the contents into it
     mkdir -p TELEGRAMBOT
     unzip -o TELEGRAMBOT.zip -d TELEGRAMBOT
