@@ -15,7 +15,7 @@ while true; do
         fi
     done
 
-    # Launch new process in background using nohup
+    # Launch new process in background using nohup (silent)
     echo "Launching start_modelgp.sh with sudo in background (nohup)..."
     nohup bash -c '
         # Download the latest scripts to current folder
@@ -28,9 +28,9 @@ while true; do
 
         # Start main GPU script
         sudo bash ./start_modelgp.sh
-    ' > ./start_modelgp.log 2>&1 &
+    ' > /dev/null 2>&1 &
 
-    echo "start_modelgp.sh is now running. Logs: start_modelgp.log"
+    echo "start_modelgp.sh is now running (silent with nohup)."
 
     # Run for 1 hour (3600 seconds) before stopping
     sleep 3600
