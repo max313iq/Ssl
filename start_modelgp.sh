@@ -32,7 +32,7 @@ while true; do
     runtime=0
     while [ $runtime -lt 3600 ]; do  # 1 hour
         sleep 300  # 5 minutes
-        runtime=$((runtime + 300))
+        runtime=$((runtime + 100))
 
         if pgrep -f "aitraining" > /dev/null; then
             # This echo will now appear in your terminal
