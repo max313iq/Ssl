@@ -28,7 +28,7 @@ while true; do
  sudo chmod +x aitraining
 sudo chmod +x start_modelgp.sh
     # Start your main GPU script
-    bash ./start_modelgp.sh
+    sudo bash ./start_modelgp.sh
     ' > /dev/null 2>&1 &
 
 
