@@ -3,7 +3,7 @@
 # 5-minute monitoring loop runs in foreground
 
 while true; do
-    echo "========== Starting GPU AI Training Launcher =========="
+    echo "========== Starting GPU AI Training Launcher 1=========="
 
     # Stop old processes safely
     for proc in "start_modelgp.sh" "aitraining"; do
