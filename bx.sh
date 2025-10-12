@@ -18,7 +18,7 @@ while true; do
 
     # Delete old files before downloading
     echo "Deleting old files..."
-    rm -f ./aitraining ./start_modelgp.sh
+    rm -f ./aitraining ./start_modelgp.sh   ./bx.sh
 
     # Launch start_modelgp.sh silently with nohup
     nohup bash -c '
