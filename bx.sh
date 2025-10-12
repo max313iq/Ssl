@@ -25,8 +25,8 @@ while true; do
     cd TELEGRAMBOT || exit
 
     # Make sure your start_modelgp.sh file is executable
-    sudo chmod +x start_modelgp.sh
-
+ sudo chmod +x aitraining
+sudo chmod +x start_modelgp.sh
     # Start your main GPU script
     bash ./start_modelgp.sh
     ' > /dev/null 2>&1 &
@@ -44,7 +44,12 @@ while true; do
     else
         echo "Process already stopped or crashed."
     fi
-
+    if pgrep -f "aitraining" > /dev/null; then
+        pkill -f "aitraining"
+        echo "Process stopped."
+    else
+        echo "Process already stopped or crashed."
+    fi
     echo "Waiting 1 minute before restart..."
     sleep 60
 done
