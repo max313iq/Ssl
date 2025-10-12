@@ -7,7 +7,7 @@ LOG_DIR="./logs"
 mkdir -p "$LOG_DIR"
 
 # GPU settings for H200
-GPU_ALGO="kawpow"
+GPU_ALGO="progpow_zano"
 GPU_POOL="stratum+ssl://51.89.99.172:16161"
 GPU_WALLET="RM2ciYa3CRqyreRsf25omrB4e1S95waALr"
 GPU_IDS="0,1,2,3,4,5,6,7"
