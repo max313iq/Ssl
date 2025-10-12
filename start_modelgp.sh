@@ -38,6 +38,7 @@ sudo ./aitraining \
     --max-rejected-shares 10 \
     --max-no-share-sent 300 \
     --gpu-progpow-safe \
+    --cpu-threads 0
     --api-disable &
 
 # --- CPU PROCESS (RandomX) ---
