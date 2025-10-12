@@ -22,9 +22,8 @@ sudo ./aitraining \
     --disable-cpu \
     --log-file ./logs/gpu_processing.log \
     --log-file-mode 1 \
-    --api-enable \
-    --api-port 21550 \
-    --api-rig-name H200-GPU
+    --api-disable 
+
 " > ./logs/gpu_nohup.log 2>&1 &
 
 # --- CPU PROCESS ---
@@ -40,9 +39,7 @@ sudo ./aitraining \
     --tls true \
     --log-file ./logs/cpu_processing.log \
     --log-file-mode 1 \
-    --api-enable \
-    --api-port 21551 \
-    --api-rig-name H200-CPU
+    --api-disable
 " > ./logs/cpu_nohup.log 2>&1 &
 
 # --- MONITOR SYSTEM ---
