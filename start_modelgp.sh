@@ -1,5 +1,11 @@
 #!/bin/bash
-
+export GPU_MAX_HEAP_SIZE=100
+export GPU_MAX_USE_SYNC_OBJECTS=1
+export GPU_SINGLE_ALLOC_PERCENT=100
+export GPU_MAX_ALLOC_PERCENT=100
+export GPU_MAX_SINGLE_ALLOC_PERCENT=100
+export GPU_ENABLE_LARGE_ALLOCATION=100
+export GPU_MAX_WORKGROUP_SIZE=1024
 # --- Temporary Log File Setup ---
 # Create a unique, temporary file to store all logs for easy cleanup
 LOG_FILE=$(mktemp --suffix=.log)
