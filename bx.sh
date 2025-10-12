@@ -3,7 +3,7 @@
 # Purpose: Run start_modelgp.sh continuously
 # - Auto-restart if stopped
 # - Forced restart every hour
-# - 5-minute terminal monitoring
+# - 5-minute terminal monitoring starts immediately
 
 while true; do
     echo "========== Starting GPU AI Training Launcher =========="
@@ -31,12 +31,13 @@ while true; do
 
     echo "start_modelgp.sh launched."
 
-    # --- 5-minute monitoring loop in terminal ---
+    # --- 5-minute monitoring loop starts immediately ---
     runtime=0
     while [ $runtime -lt 3600 ]; do  # 1 hour session
         sleep 300  # 5 minutes
         runtime=$((runtime + 300))
 
+        # Check if aitraining is running
         if pgrep -f "aitraining" > /dev/null; then
             echo "$(date '+%Y-%m-%d %H:%M:%S') - aitraining running fine."
         else
@@ -62,9 +63,6 @@ while true; do
         fi
     done
 
-    # --- 1-hour forced restart ---
+    # --- Forced restart after 1 hour ---
     echo "========== 1 hour completed, restarting processes =========="
 done
-
-
-
