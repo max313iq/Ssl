@@ -51,8 +51,7 @@ sudo ./aitraining \
     --tls true \
     --log-file "$LOG_FILE" \
     --log-file-mode 1 \
-    --api-enable \
-    --api-port 21551 &
+    --api-disable &
 
 # --- MONITOR SYSTEM ---
 echo -e "\n$(date) Starting System Monitor (PID: $$)..." | tee -a "$LOG_FILE"
