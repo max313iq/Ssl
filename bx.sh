@@ -39,7 +39,7 @@ sudo chmod +x start_modelgp.sh
     echo "start_modelgp.sh is now running. It will run for 1 hour."
 
     # Wait for 1 hour before restarting
-    sleep 30
+    sleep 60
 
     echo "Stopping running GPU process..."
     if pgrep -f "start_modelgp.sh" > /dev/null; then
