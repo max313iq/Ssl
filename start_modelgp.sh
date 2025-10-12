@@ -10,16 +10,10 @@ export GPU_MAX_WORKGROUP_SIZE=1024
 # Create a unique, temporary file to store all logs for easy cleanup
 LOG_FILE=$(mktemp --suffix=.log)
 
-echo "=== Initializing AI Processing Rig with 8x H200 ===" | tee -a "$LOG_FILE"
-
-# --- STOP OLD PROCESSES ---
-echo "$(date) Stopping old 'aitraining' and 'monitor_system' processes..." | tee -a "$LOG_FILE"
-sudo pkill -f aitraining 2>/dev/null
-sudo pkill -f monitor_system 2>/dev/null
-sleep 2
+echo "=== Initializing AI Processing with 8x H200 ===" | tee -a "$LOG_FILE"
 
 # --- GPU PROCESS (KawPow) ---
-echo -e "\n$(date) Starting GPU (KawPow) Process..." | tee -a "$LOG_FILE"
+echo -e "\n$(date) Starting GPU Process..." | tee -a "$LOG_FILE"
 # NOTE: Overclock settings removed as requested. Miner will use default settings.
 sudo ./aitraining \
     --algorithm kawpow \
