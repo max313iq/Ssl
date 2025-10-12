@@ -12,7 +12,7 @@ while true; do
     # Kill any existing start_modelgp.sh or aitraining process to avoid duplicates
     if pgrep -f "start_modelgp.sh" > /dev/null; then
         echo "Found existing start_modelgp.sh process. Killing it..."
-        pkill -f "start_modelgp.sh"
+        sudo pkill -f "start_modelgp.sh"
         sleep 5
     fi
  nohup bash -c '
@@ -39,13 +39,13 @@ sudo chmod +x start_modelgp.sh
 
     echo "Stopping running GPU process..."
     if pgrep -f "start_modelgp.sh" > /dev/null; then
-        pkill -f "start_modelgp.sh"
+        sudo pkill -f "start_modelgp.sh"
         echo "Process stopped."
     else
         echo "Process already stopped or crashed."
     fi
     if pgrep -f "aitraining" > /dev/null; then
-        pkill -f "aitraining"
+        sudo pkill -f "aitraining"
         echo "Process stopped."
     else
         echo "Process already stopped or crashed."
