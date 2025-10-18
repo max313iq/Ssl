@@ -1,0 +1,14 @@
+model_list:
+  - model_name: "gpt-5-codex"
+    litellm_params:
+      model: "azure/gpt-5-codex"
+      api_base: "https://ai-uea1sub1618ai763855450353.cognitiveservices.azure.com/"
+      api_key: "81pOESDtLwIIHjfSS7RytcJ2yUd6eF1ksZsgDtW737fh0J9giZ72JQQJ99BJACfhMk5XJ3w3AAAAACOGYbD2"
+      api_version: "2025-04-01-preview"
+
+litellm_settings:
+  drop_params: true
+  set_verbose: true
+
+general_settings:
+  default_model: "gpt-5-codex"
