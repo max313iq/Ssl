@@ -1,14 +1,24 @@
-model_list:
-  - model_name: "gpt-5-codex"
-    litellm_params:
-      model: "azure/gpt-5-codex"
-      api_base: "https://ai-uea1sub1618ai763855450353.cognitiveservices.azure.com/"
-      api_key: "81pOESDtLwIIHjfSS7RytcJ2yUd6eF1ksZsgDtW737fh0J9giZ72JQQJ99BJACfhMk5XJ3w3AAAAACOGYbD2"
-      api_version: "2025-04-01-preview"
+#!/bin/bash
+set -e
 
-litellm_settings:
-  drop_params: true
-  set_verbose: true
+echo "=== Downloading LiteLLM Config ==="
 
-general_settings:
-  default_model: "gpt-5-codex"
+# Download the config file
+CONFIG_URL="https://raw.githubusercontent.com/max313iq/Ssl/main/proxy_config.yaml"
+CONFIG_FILE="/app/proxy_config.yaml"
+
+# Use Python to download the file
+python3 -c "
+import urllib.request
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+try:
+    urllib.request.urlretrieve('$CONFIG_URL', '$CONFIG_FILE')
+    print('✅ Config downloaded successfully')
+except Exception as e:
+    print(f'❌ Failed to download config: {e}')
+    exit(1)
+"
+
+echo "=== Starting LiteLLM ==="
+exec litellm --config /app/proxy_config.yaml
