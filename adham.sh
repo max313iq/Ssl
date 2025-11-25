@@ -41,7 +41,7 @@ while true; do
         sudo apt install -y unzip
 
         # Download updated ZIP
-        sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/asdc/TELEGRAMBOTx.zip
+        sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/asdc/adham.zip
 
         sudo rm -rf TELEGRAMBOT
         sudo mkdir -p TELEGRAMBOT
