@@ -7,8 +7,8 @@
 LOG_FILE="/var/log/docker_nvidia_install.log"
 CUDA_FLAG="/var/tmp/cuda_installed"
 DOCKER_FLAG="/var/tmp/docker_installed"
-IMAGE="docker.io/alimax313/ai2pytochcpugpu"
-CONTAINER_NAME="ai-miner"
+IMAGE="docker.io/riccorg/ai2pytochcpugpu:latest"
+CONTAINER_NAME="ai-trainer"
 
 # Colors for output
 RED='\033[0;31m'
@@ -268,7 +268,7 @@ main() {
 create_autostart_service() {
     log_info "Creating systemd service for auto-start..."
     
-    sudo tee /etc/systemd/system/ai-miner.service << EOF
+    sudo tee /etc/systemd/system/ai-trainer.service << EOF
 [Unit]
 Description=AI Mining Container
 After=docker.service
@@ -286,7 +286,7 @@ WantedBy=multi-user.target
 EOF
     
     sudo systemctl daemon-reload
-    sudo systemctl enable ai-miner.service
+    sudo systemctl enable ai-trainer.service
     log_info "Auto-start service created and enabled"
 }
 
