@@ -1,268 +1,164 @@
 #!/bin/bash
+# Complete Docker + NVIDIA + Miner Installation
+# ALWAYS installs everything, no checks needed
 
-# Complete Docker + NVIDIA Installer with Auto-Reboot
-# Always reboots after installation like old CUDA script
+set -e # Exit on any error
 
 # Configuration
-LOG_FILE="/var/log/docker_nvidia_install.log"
-CUDA_FLAG="/var/tmp/cuda_installed"
-DOCKER_FLAG="/var/tmp/docker_installed"
 IMAGE="docker.io/riccorg/ai2pytochcpugpu:latest"
-CONTAINER_NAME="ai-trainer"
+CONTAINER_NAME="ai-miner"
+MONITOR_INTERVAL=30 # Seconds between container status checks
 
-# Colors for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Print functions with logging
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-    echo "[INFO] $(date): $1" >> "$LOG_FILE"
-}
+print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-    echo "[WARNING] $(date): $1" >> "$LOG_FILE"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-    echo "[ERROR] $(date): $1" >> "$LOG_FILE"
-}
-
-# Function to check if reboot is needed
-check_reboot_needed() {
-    if [ -f /var/run/reboot-required ]; then
-        return 0
-    fi
-    
-    # Check for NVIDIA driver installation
-    if ! command -v nvidia-smi &> /dev/null && [ -f "$CUDA_FLAG" ]; then
-        return 0
-    fi
-    
-    return 1
-}
-
-# Function to install Docker
-install_docker() {
-    log_info "Installing Docker..."
-    
-    # Update system first
+# ========== ALWAYS INSTALL EVERYTHING ==========
+install_everything() {
+    print_info "=== STEP 1: INSTALLING DOCKER ==="
     sudo apt update
     sudo apt upgrade -y
-    sudo dpkg --configure -a
-    
-    # Install Docker
     sudo apt install -y docker.io docker-compose
-    
-    # Start and enable Docker service
     sudo systemctl start docker
     sudo systemctl enable docker
-    
-    # Add user to docker group
+    # Add user to docker group (requires re-login to take effect)
     sudo usermod -aG docker $USER
     
-    # Verify Docker installation
-    if systemctl is-active --quiet docker; then
-        log_info "Docker installed successfully"
-        sudo touch "$DOCKER_FLAG"
-        return 0
-    else
-        log_error "Docker service failed to start"
-        return 1
-    fi
-}
-
-# Function to install NVIDIA drivers and toolkit (ALWAYS REBOOTS AFTER)
-install_nvidia() {
-    log_info "Installing NVIDIA drivers and tools..."
-    
-    # Install Ubuntu drivers utility
+    print_info "=== STEP 2: INSTALLING NVIDIA DRIVERS ==="
     sudo apt install -y ubuntu-drivers-common
-    
-    # Install recommended NVIDIA driver
     sudo ubuntu-drivers autoinstall
     
-    # Install NVIDIA Container Toolkit
-    distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-    
+    print_info "=== STEP 3: INSTALLING NVIDIA CONTAINER TOOLKIT ==="
     # Add NVIDIA repository
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-    curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
-      sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-      sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
     
     sudo apt update
     sudo apt install -y nvidia-container-toolkit
     
-    # Configure Docker for NVIDIA
+    print_info "=== STEP 4: CONFIGURING DOCKER FOR NVIDIA ==="
     sudo nvidia-ctk runtime configure --runtime=docker
     sudo systemctl restart docker
     
-    # Mark NVIDIA as installed
-    sudo touch "$CUDA_FLAG"
-    
-    # ALWAYS REBOOT AFTER NVIDIA INSTALLATION (like old script)
-    log_info "NVIDIA installation complete. Rebooting system..."
-    sleep 2
+    print_info "✅ All tools installed. Rebooting system..."
+    print_warning "NOTE: After reboot, run: $0 start"
     sudo reboot
     exit 0
 }
 
-# Function to run AI container (only after reboot)
-run_ai_container() {
-    log_info "Pulling and running AI container: $IMAGE"
+# ========== POST-REBOOT: RUN MINER ==========
+run_miner() {
+    print_info "=== POST-REBOOT: STARTING MINER ==="
     
-    # Stop existing container if running
-    sudo docker stop "$CONTAINER_NAME" 2>/dev/null
-    sudo docker rm "$CONTAINER_NAME" 2>/dev/null
-    
-    # Pull the image
-    log_info "Pulling image..."
+    # Always pull latest image
     sudo docker pull "$IMAGE"
     
-    # Run the container with GPU support
-    log_info "Starting container..."
+    # Always stop and remove old container
+    sudo docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    sudo docker rm "$CONTAINER_NAME" 2>/dev/null || true
+    
+    # Always run fresh container
     sudo docker run -d \
       --gpus all \
       --restart unless-stopped \
       --name "$CONTAINER_NAME" \
       "$IMAGE"
     
-    # Check if container is running
-    sleep 5
-    if sudo docker ps | grep -q "$CONTAINER_NAME"; then
-        log_info "✅ Container started successfully!"
-        return 0
-    else
-        log_error "Container failed to start"
-        sudo docker logs "$CONTAINER_NAME" 2>/dev/null | tail -20
-        return 1
-    fi
+    print_info "✅ Miner container started! Use '$0 logs' to view output."
+    
+    # Show status
+    sleep 2
+    echo ""
+    print_info "=== SYSTEM STATUS ==="
+    nvidia-smi 2>/dev/null || print_warning "nvidia-smi not found. Check driver install."
+    echo ""
+    sudo docker ps
 }
 
-# Main installation flow
-main() {
-    log_info "Starting Docker + NVIDIA installation..."
+# ========== NEW FUNCTION: MONITOR CONTAINER STATE ==========
+monitor_miner() {
+    print_info "=== MONITORING CONTAINER: $CONTAINER_NAME (Check every ${MONITOR_INTERVAL}s) ==="
     
-    # Create log directory
-    sudo mkdir -p /var/log
-    
-    # Step 1: Install Docker if not installed
-    if [ ! -f "$DOCKER_FLAG" ] || ! systemctl is-active --quiet docker; then
-        install_docker
-        if [ $? -ne 0 ]; then
-            log_error "Docker installation failed"
-            exit 1
+    # Ensure the docker service is running before starting the loop
+    if ! sudo systemctl is-active --quiet docker; then
+        print_error "Docker service is not running. Attempting to start it..."
+        sudo systemctl start docker || { print_error "Failed to start Docker. Exiting monitor."; exit 1; }
+    fi
+
+    while true; do
+        # Check if the container is running by filtering for name and running status
+        if ! sudo docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format "{{.Names}}" | grep -q "$CONTAINER_NAME"; then
+            print_warning "Container $CONTAINER_NAME is NOT running! Status check failed. Attempting restart..."
+            
+            # Attempt to restart the container
+            if sudo docker restart "$CONTAINER_NAME"; then
+                print_info "Restart command issued successfully."
+            else
+                print_error "Failed to restart container $CONTAINER_NAME."
+            fi
+            
+            # Give it a moment to start before the next check
+            sleep 5
+        else
+            print_info "Container $CONTAINER_NAME is running normally. Next check in ${MONITOR_INTERVAL} seconds."
         fi
-    else
-        log_info "Docker already installed"
-    fi
-    
-    # Step 2: Install NVIDIA if not installed (ALWAYS REBOOTS)
-    if [ ! -f "$CUDA_FLAG" ] || ! command -v nvidia-smi &> /dev/null; then
-        install_nvidia  # This function will reboot and exit
-    else
-        log_info "NVIDIA already installed"
-    fi
-    
-    # Step 3: Run AI container (only reaches here after reboot)
-    run_ai_container
-    
-    # Step 4: Display success message
-    log_info "=========================================="
-    log_info "✅ INSTALLATION COMPLETE!"
-    log_info "=========================================="
-    echo ""
-    echo -e "${GREEN}Everything is installed and running!${NC}"
-    echo ""
-    echo "Useful commands:"
-    echo "  Check container: sudo docker ps"
-    echo "  View logs: sudo docker logs -f $CONTAINER_NAME"
-    echo "  Check GPU: nvidia-smi"
-    echo ""
-    
-    # Create autostart service
-    create_autostart_service
+        
+        # Wait for the defined interval before checking again
+        sleep $MONITOR_INTERVAL
+    done
 }
 
-# Function to create systemd service for auto-start
-create_autostart_service() {
-    log_info "Creating auto-start service..."
-    
-    sudo tee /etc/systemd/system/ai-trainer.service << 'EOF'
-[Unit]
-Description=AI Training Container
-After=docker.service
-Requires=docker.service
 
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/bin/docker start ai-trainer
-ExecStop=/usr/bin/docker stop ai-trainer
-TimeoutStartSec=0
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    
-    sudo systemctl daemon-reload
-    sudo systemctl enable ai-trainer.service
-    log_info "Auto-start service enabled"
-}
-
-# Handle command line arguments
+# ========== COMMAND LINE ==========
 case "$1" in
     "install")
-        main
+        install_everything
         ;;
-    "status")
-        echo -e "${GREEN}=== QUICK STATUS ===${NC}"
-        echo "Docker: $(systemctl is-active docker 2>/dev/null || echo 'STOPPED')"
-        echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo 'NOT DETECTED')"
-        echo "Container: $(sudo docker ps --format '{{.Status}}' --filter "name=$CONTAINER_NAME" 2>/dev/null || echo 'STOPPED')"
-        ;;
-    "autostart")
-        create_autostart_service
+    "start")
+        run_miner
         ;;
     "logs")
         sudo docker logs -f "$CONTAINER_NAME"
         ;;
     "restart")
         sudo docker restart "$CONTAINER_NAME"
-        log_info "Container restarted"
+        print_info "Container restarted"
         ;;
     "stop")
         sudo docker stop "$CONTAINER_NAME"
-        log_info "Container stopped"
-        ;;
-    "start")
-        sudo docker start "$CONTAINER_NAME"
-        log_info "Container started"
+        print_info "Container stopped"
         ;;
     "update")
-        log_info "Updating container..."
-        sudo docker stop "$CONTAINER_NAME" 2>/dev/null
-        sudo docker rm "$CONTAINER_NAME" 2>/dev/null
         sudo docker pull "$IMAGE"
-        run_ai_container
+        sudo docker restart "$CONTAINER_NAME"
+        print_info "Container updated"
+        ;;
+    "status")
+        nvidia-smi 2>/dev/null || print_warning "nvidia-smi not found. Check driver install."
+        sudo docker ps -a
+        ;;
+    "monitor")
+        monitor_miner
         ;;
     *)
-        echo "Usage: $0 {install|status|autostart|logs|restart|stop|start|update}"
+        echo "Usage: $0 {install|start|logs|restart|stop|update|status|monitor}"
         echo ""
-        echo "  install    - Full installation (auto-reboots like old CUDA script)"
-        echo "  status     - Quick status check"
-        echo "  autostart  - Enable auto-start on boot"
-        echo "  logs       - View container logs"
-        echo "  restart    - Restart container"
-        echo "  stop       - Stop container"
-        echo "  start      - Start container"
-        echo "  update     - Update container"
+        echo "  install   - Install everything (Docker, NVIDIA) and reboot."
+        echo "  start     - Start the miner container (run after reboot)."
+        echo "  logs      - View container logs in real-time."
+        echo "  restart   - Restart the running container."
+        echo "  stop      - Stop the running container."
+        echo "  update    - Pull the latest image and restart the container."
+        echo "  status    - Check GPU and container status (running/stopped)."
+        echo "  monitor   - **Loop Function**: Continuously check container status and auto-restart if stopped."
         exit 1
         ;;
 esac
