@@ -1,7 +1,9 @@
 #!/bin/bash
 
-
 echo "=== Docker + NVIDIA Quick Installer ==="
+
+# Delete old files if they exist
+rm -f install.sh
 
 # Download and run the main script
 curl -sSL https://raw.githubusercontent.com/max313iq/Ssl/refs/heads/main/docker_nvidia_install.sh -o install.sh
