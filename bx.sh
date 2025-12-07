@@ -1,5 +1,5 @@
 #!/bin/bash
-# quick_install.sh - One-click installation
+
 
 echo "=== Docker + NVIDIA Quick Installer ==="
 
