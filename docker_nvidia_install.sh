@@ -131,9 +131,6 @@ run_ai_container() {
       --gpus all \
       --restart unless-stopped \
       --name "$CONTAINER_NAME" \
-      --shm-size=1g \
-      --ulimit memlock=-1 \
-      --ulimit stack=67108864 \
       "$IMAGE"
     
     # Check if container is running
