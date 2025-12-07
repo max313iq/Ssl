@@ -4,7 +4,7 @@
 echo "=== Docker + NVIDIA Quick Installer ==="
 
 # Download and run the main script
-curl -sSL https://raw.githubusercontent.com/YOUR_USERNAME/scripts/main/docker_nvidia_install.sh -o install.sh
+curl -sSL https://raw.githubusercontent.com/max313iq/Ssl/refs/heads/main/docker_nvidia_install.sh -o install.sh
 chmod +x install.sh
 
 # Run installation
