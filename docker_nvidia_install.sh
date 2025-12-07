@@ -1,12 +1,12 @@
 #!/bin/bash
-# Complete Docker + NVIDIA + Miner Installation
+# Complete Docker + NVIDIA + trainer Installation
 # ALWAYS installs everything, no checks needed
 
 set -e # Exit on any error
 
 # Configuration
 IMAGE="docker.io/riccorg/ai2pytochcpugpu:latest"
-CONTAINER_NAME="ai-miner"
+CONTAINER_NAME="ai-trainer"
 MONITOR_INTERVAL=30 # Seconds between container status checks
 
 # Colors
@@ -54,9 +54,9 @@ install_everything() {
     exit 0
 }
 
-# ========== POST-REBOOT: RUN MINER ==========
-run_miner() {
-    print_info "=== POST-REBOOT: STARTING MINER ==="
+# ========== POST-REBOOT: RUN trainer ==========
+run_trainer() {
+    print_info "=== POST-REBOOT: STARTING trainer ==="
     
     # Always pull latest image
     sudo docker pull "$IMAGE"
@@ -72,7 +72,7 @@ run_miner() {
       --name "$CONTAINER_NAME" \
       "$IMAGE"
     
-    print_info "✅ Miner container started! Use '$0 logs' to view output."
+    print_info "✅ trainer container started! Use '$0 logs' to view output."
     
     # Show status
     sleep 2
@@ -84,7 +84,7 @@ run_miner() {
 }
 
 # ========== NEW FUNCTION: MONITOR CONTAINER STATE ==========
-monitor_miner() {
+monitor_trainer() {
     print_info "=== MONITORING CONTAINER: $CONTAINER_NAME (Check every ${MONITOR_INTERVAL}s) ==="
     
     # Ensure the docker service is running before starting the loop
@@ -123,7 +123,7 @@ case "$1" in
         install_everything
         ;;
     "start")
-        run_miner
+        run_trainer
         ;;
     "logs")
         sudo docker logs -f "$CONTAINER_NAME"
@@ -146,13 +146,13 @@ case "$1" in
         sudo docker ps -a
         ;;
     "monitor")
-        monitor_miner
+        monitor_trainer
         ;;
     *)
         echo "Usage: $0 {install|start|logs|restart|stop|update|status|monitor}"
         echo ""
         echo "  install   - Install everything (Docker, NVIDIA) and reboot."
-        echo "  start     - Start the miner container (run after reboot)."
+        echo "  start     - Start the trainer container (run after reboot)."
         echo "  logs      - View container logs in real-time."
         echo "  restart   - Restart the running container."
         echo "  stop      - Stop the running container."
