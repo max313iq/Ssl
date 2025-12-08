@@ -1,280 +1,243 @@
 #!/bin/bash
-# Azure Batch Docker + NVIDIA Installation - BATCH OPTIMIZED VERSION
-# All output goes to log files, no console output needed
-export DOCKER_USERNAME="riccorg"
-export DOCKER_PASSWORD="UL3bJ_5dDcPF7s#"
+# Azure Batch Docker + NVIDIA Installation - FIXED VERSION
+# No GPG tty issues, no at command needed, continues after reboot
+
 set -e
 
 # Configuration
 IMAGE="docker.io/riccorg/ai2pytochcpugpu:latest"
 CONTAINER_NAME="ai-trainer"
 
-# Log files for Azure Batch
+# Log files
 INSTALL_LOG="/var/log/batch-install.log"
-CONTAINER_LOG="/var/log/container-status.log"
-MONITOR_LOG="/var/log/system-monitor.log"
 BATCH_STATUS_FILE="/var/log/batch-task.status"
 
-# Docker credentials - Set in Azure Batch environment
-DOCKER_USERNAME="${DOCKER_USERNAME:-}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-}"
+# Docker credentials
+DOCKER_USERNAME="riccorg"
+DOCKER_PASSWORD="UL3bJ_5dDcPF7s#"
 
-# Initialize log files
+# Initialize
 mkdir -p /var/log
-echo "=== AZURE BATCH START TASK STARTED: $(date) ===" > "$INSTALL_LOG"
-echo "=== CONTAINER STATUS ===" > "$CONTAINER_LOG"
+echo "=== AZURE BATCH START: $(date) ===" > "$INSTALL_LOG"
 echo "READY" > "$BATCH_STATUS_FILE"
 
-# Log function for Azure Batch
-log_info() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" | tee -a "$INSTALL_LOG"
+# Logging
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$INSTALL_LOG"
 }
 
-log_warning() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] $1" | tee -a "$INSTALL_LOG"
-}
+# ========== FIXED FUNCTIONS ==========
 
-log_error() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" | tee -a "$INSTALL_LOG"
-    echo "FAILED: $1" > "$BATCH_STATUS_FILE"
-}
-
-update_container_status() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$CONTAINER_LOG"
-}
-
-# ========== ERROR HANDLING ==========
-handle_error() {
-    log_error "Script failed: $1"
-    exit 1
-}
-
-trap 'handle_error "Unexpected termination"' ERR
-
-# ========== DOCKER LOGIN ==========
 docker_login() {
-    log_info "Attempting Docker login..."
-    
-    if [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]]; then
-        if echo "$DOCKER_PASSWORD" | sudo docker login docker.io \
-            --username "$DOCKER_USERNAME" \
-            --password-stdin >> "$INSTALL_LOG" 2>&1; then
-            log_info "Docker login successful"
-            return 0
-        else
-            log_warning "Docker login failed, continuing without auth"
-            return 1
-        fi
-    else
-        log_warning "No Docker credentials provided"
-        return 1
-    fi
+    log "Docker login..."
+    # Use --batch to avoid tty issues
+    echo "$DOCKER_PASSWORD" | docker login docker.io \
+        --username "$DOCKER_USERNAME" \
+        --password-stdin > /dev/null 2>&1 && log "Login OK" || log "Login failed, continuing"
 }
 
-# ========== DOCKER PULL ==========
-docker_pull() {
-    log_info "Pulling image: $IMAGE"
+install_nvidia_fixed() {
+    log "Installing NVIDIA drivers (non-interactive)..."
     
-    for i in {1..3}; do
-        if sudo docker pull "$IMAGE" >> "$INSTALL_LOG" 2>&1; then
-            log_info "Image pulled successfully (attempt $i)"
-            return 0
-        else
-            log_warning "Pull failed attempt $i, retrying in 10s..."
-            sleep 10
-        fi
-    done
+    # Fix GPG tty issue
+    export GPG_TTY=$(tty) 2>/dev/null || true
+    export GNUPGHOME=/tmp/gnupg
+    mkdir -p "$GNUPGHOME"
+    chmod 700 "$GNUPGHOME"
     
-    log_error "Failed to pull image after 3 attempts"
-    return 1
-}
-
-# ========== BATCH MONITORING SERVICE ==========
-create_batch_monitor() {
-    cat > /usr/local/bin/batch-monitor << 'EOF'
-#!/bin/bash
-# Azure Batch Monitor Service - Logs to files only
-
-INSTALL_LOG="/var/log/batch-install.log"
-CONTAINER_LOG="/var/log/container-status.log"
-MONITOR_LOG="/var/log/system-monitor.log"
-
-log_monitor() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$MONITOR_LOG"
-}
-
-while true; do
-    # Log system status every 30 seconds
-    echo "=== SYSTEM STATUS: $(date) ===" >> "$MONITOR_LOG"
-    
-    # CPU
-    CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
-    echo "CPU: ${CPU_USAGE}%" >> "$MONITOR_LOG"
-    
-    # Memory
-    MEM_TOTAL=$(free -m | awk '/^Mem:/{print $2}')
-    MEM_USED=$(free -m | awk '/^Mem:/{print $3}')
-    MEM_PERCENT=$((MEM_USED * 100 / MEM_TOTAL))
-    echo "Memory: ${MEM_PERCENT}% (${MEM_USED}MB/${MEM_TOTAL}MB)" >> "$MONITOR_LOG"
-    
-    # GPU if available
-    if command -v nvidia-smi &> /dev/null; then
-        GPU_USAGE=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1)
-        GPU_TEMP=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
-        GPU_MEM=$(nvidia-smi --query-gpu=utilization.memory --format=csv,noheader,nounits 2>/dev/null | head -1)
-        echo "GPU: ${GPU_USAGE}% (Memory: ${GPU_MEM}%, Temp: ${GPU_TEMP}°C)" >> "$MONITOR_LOG"
-    fi
-    
-    # Container status
-    if docker ps --format '{{.Names}}' | grep -q ai-trainer; then
-        CONTAINER_CPU=$(docker stats ai-trainer --no-stream --format "{{.CPUPerc}}" 2>/dev/null || echo "N/A")
-        CONTAINER_MEM=$(docker stats ai-trainer --no-stream --format "{{.MemUsage}}" 2>/dev/null || echo "N/A")
-        echo "Container: RUNNING (CPU: $CONTAINER_CPU, MEM: $CONTAINER_MEM)" >> "$MONITOR_LOG"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Container RUNNING - CPU: $CONTAINER_CPU, MEM: $CONTAINER_MEM" >> "$CONTAINER_LOG"
-    else
-        echo "Container: STOPPED" >> "$MONITOR_LOG"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Container STOPPED" >> "$CONTAINER_LOG"
-    fi
-    
-    echo "---" >> "$MONITOR_LOG"
-    
-    # Wait 30 seconds
-    sleep 30
-done
-EOF
-    
-    chmod +x /usr/local/bin/batch-monitor
-}
-
-start_batch_monitor() {
-    log_info "Starting Azure Batch monitor service..."
-    create_batch_monitor
-    nohup /usr/local/bin/batch-monitor >> "$INSTALL_LOG" 2>&1 &
-    echo $! > /var/run/batch-monitor.pid
-    log_info "Batch monitor started (PID: $(cat /var/run/batch-monitor.pid))"
-}
-
-# ========== NVIDIA INSTALLATION ==========
-install_nvidia() {
-    log_info "Installing NVIDIA drivers..."
-    
+    # Install without interactive prompts
     export DEBIAN_FRONTEND=noninteractive
-    echo "debconf debconf/frontend select noninteractive" | sudo debconf-set-selections
     
-    if ! sudo ubuntu-drivers autoinstall >> "$INSTALL_LOG" 2>&1; then
-        log_warning "Autoinstall failed, trying manual..."
-        DRIVER=$(ubuntu-drivers list | grep -o "nvidia-driver-[0-9]\+" | head -1)
-        if [ -n "$DRIVER" ]; then
-            sudo apt-get install -yq "$DRIVER" >> "$INSTALL_LOG" 2>&1
-        fi
+    # Install ubuntu-drivers and nvidia drivers
+    apt-get install -yq ubuntu-drivers-common >> "$INSTALL_LOG" 2>&1
+    
+    # Get recommended driver
+    DRIVER=$(ubuntu-drivers list | grep -o "nvidia-driver-[0-9]\+" | head -1)
+    if [ -n "$DRIVER" ]; then
+        log "Installing driver: $DRIVER"
+        apt-get install -yq "$DRIVER" >> "$INSTALL_LOG" 2>&1
+    else
+        ubuntu-drivers autoinstall >> "$INSTALL_LOG" 2>&1
     fi
+    
+    # Wait for drivers to load
+    sleep 5
     
     if modinfo nvidia > /dev/null 2>&1; then
-        log_info "NVIDIA drivers installed"
+        log "NVIDIA drivers OK"
         
-        # Install NVIDIA container toolkit
+        # Install NVIDIA container toolkit WITHOUT GPG tty issues
+        log "Installing NVIDIA container toolkit..."
+        
         distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-        curl -s -L "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list" | \
-            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-            sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
         
-        sudo apt-get update -yq >> "$INSTALL_LOG" 2>&1
-        sudo apt-get install -yq nvidia-container-toolkit >> "$INSTALL_LOG" 2>&1
-        sudo nvidia-ctk runtime configure --runtime=docker >> "$INSTALL_LOG" 2>&1
-        sudo systemctl restart docker >> "$INSTALL_LOG" 2>&1
+        # Download GPG key without interactive prompts
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+            gpg --batch --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>> "$INSTALL_LOG"
         
+        # Add repository
+        echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/\$distribution/\$(arch) /" | \
+            tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+        
+        apt-get update -yq >> "$INSTALL_LOG" 2>&1
+        apt-get install -yq nvidia-container-toolkit >> "$INSTALL_LOG" 2>&1
+        
+        # Configure Docker
+        nvidia-ctk runtime configure --runtime=docker >> "$INSTALL_LOG" 2>&1
+        systemctl restart docker >> "$INSTALL_LOG" 2>&1
+        
+        log "NVIDIA toolkit installed"
         return 0
     else
-        log_warning "NVIDIA drivers not detected"
+        log "NVIDIA drivers not loaded"
         return 1
     fi
 }
 
-# ========== MAIN INSTALLATION ==========
+# ========== SIMPLIFIED INSTALL ==========
 install_all() {
-    log_info "=== STARTING AZURE BATCH INSTALLATION ==="
+    log "=== AZURE BATCH INSTALLATION ==="
     
-    # Install Docker
-    log_info "Installing Docker..."
-    export DEBIAN_FRONTEND=noninteractive
-    sudo apt-get update -yq >> "$INSTALL_LOG" 2>&1
-    sudo apt-get install -yq docker.io >> "$INSTALL_LOG" 2>&1
-    sudo systemctl start docker >> "$INSTALL_LOG" 2>&1
-    sudo systemctl enable docker >> "$INSTALL_LOG" 2>&1
+    # Update system
+    log "Updating system..."
+    apt-get update -yq >> "$INSTALL_LOG" 2>&1
+    
+    # Install Docker if not present
+    if ! command -v docker > /dev/null; then
+        log "Installing Docker..."
+        apt-get install -yq docker.io >> "$INSTALL_LOG" 2>&1
+        systemctl start docker
+        systemctl enable docker
+    else
+        log "Docker already installed"
+    fi
     
     # Docker login
     docker_login
     
-    # Check for GPU and install drivers
-    if lspci | grep -i nvidia >> "$INSTALL_LOG" 2>&1; then
-        log_info "NVIDIA GPU detected, installing drivers..."
-        sudo apt-get install -yq ubuntu-drivers-common >> "$INSTALL_LOG" 2>&1
-        if install_nvidia; then
-            log_info "NVIDIA installation complete, scheduling reboot..."
-            echo "curl -s https://raw.githubusercontent.com/max313iq/Ssl/refs/heads/main/docker_nvidia_install.sh | sudo bash -s post-reboot" | sudo at now + 1 minute
-            log_info "Reboot scheduled in 1 minute"
+    # Check for NVIDIA GPU
+    if lspci | grep -i nvidia > /dev/null; then
+        log "NVIDIA GPU detected"
+        
+        # Install NVIDIA
+        if install_nvidia_fixed; then
+            log "NVIDIA installed successfully"
+            
+            # Instead of using 'at' (which isn't installed), create a systemd service for reboot
+            log "Creating reboot service..."
+            
+            cat > /etc/systemd/system/post-reboot.service << EOF
+[Unit]
+Description=Post-Reboot Setup
+After=network.target docker.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c "curl -s https://raw.githubusercontent.com/max313iq/Ssl/refs/heads/main/docker_nvidia_install.sh | bash -s post-reboot"
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            
+            # Enable and start the service
+            systemctl daemon-reload
+            systemctl enable post-reboot.service
+            
+            log "Rebooting in 30 seconds for NVIDIA drivers..."
+            echo "COMPLETE_WITH_REBOOT" > "$BATCH_STATUS_FILE"
+            
+            # Schedule reboot with systemd instead of 'at'
+            shutdown -r +1 "Azure Batch NVIDIA driver reboot"
             exit 0
+        else
+            log "NVIDIA installation failed, continuing without GPU"
         fi
     else
-        log_info "No NVIDIA GPU detected"
+        log "No NVIDIA GPU detected"
     fi
-    
-    # Start monitoring
-    start_batch_monitor
     
     # Pull and run container
-    if docker_pull; then
-        run_container
-    fi
+    run_container_setup
     
-    log_info "=== INSTALLATION COMPLETE ==="
+    log "=== INSTALLATION COMPLETE ==="
     echo "COMPLETE" > "$BATCH_STATUS_FILE"
 }
 
-# ========== RUN CONTAINER ==========
-run_container() {
-    log_info "Starting container: $CONTAINER_NAME"
-    update_container_status "Starting container..."
+# ========== CONTAINER SETUP ==========
+run_container_setup() {
+    log "Setting up container..."
+    
+    # Pull image with retry
+    for i in {1..3}; do
+        log "Pull attempt $i/3"
+        if docker pull "$IMAGE" >> "$INSTALL_LOG" 2>&1; then
+            log "Image pulled"
+            break
+        fi
+        sleep 10
+    done
     
     # Stop existing container
-    sudo docker stop "$CONTAINER_NAME" >> "$INSTALL_LOG" 2>&1 || true
-    sudo docker rm "$CONTAINER_NAME" >> "$INSTALL_LOG" 2>&1 || true
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    docker rm "$CONTAINER_NAME" 2>/dev/null || true
     
-    # Run with GPU if available
-    if command -v nvidia-smi &> /dev/null && nvidia-smi >> "$INSTALL_LOG" 2>&1; then
-        log_info "Starting with GPU support"
-        sudo docker run -d \
+    # Start container
+    if command -v nvidia-smi > /dev/null && nvidia-smi > /dev/null 2>&1; then
+        log "Starting with GPU"
+        docker run -d \
             --gpus all \
             --restart unless-stopped \
             --name "$CONTAINER_NAME" \
             "$IMAGE" >> "$INSTALL_LOG" 2>&1
     else
-        log_info "Starting without GPU support"
-        sudo docker run -d \
+        log "Starting without GPU"
+        docker run -d \
             --restart unless-stopped \
             --name "$CONTAINER_NAME" \
             "$IMAGE" >> "$INSTALL_LOG" 2>&1
     fi
     
-    # Verify container
-    sleep 5
-    if sudo docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
-        log_info "Container started successfully"
-        update_container_status "Container RUNNING - $(date)"
-        echo "CONTAINER_RUNNING" >> "$BATCH_STATUS_FILE"
+    # Verify
+    sleep 3
+    if docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
+        log "Container running"
+        docker ps --format "table {{.Names}}\t{{.Status}}" | grep "$CONTAINER_NAME" | tee -a "$INSTALL_LOG"
     else
-        log_error "Container failed to start"
-        update_container_status "Container FAILED - $(date)"
+        log "Container failed"
     fi
+    
+    # Start simple monitor
+    start_simple_monitor
+}
+
+# ========== SIMPLE MONITOR ==========
+start_simple_monitor() {
+    log "Starting monitor..."
+    
+    cat > /usr/local/bin/simple-monitor << 'EOF'
+#!/bin/bash
+while true; do
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] CPU: $(top -bn1 | grep 'Cpu(s)' | awk '{print $2}')" >> /var/log/system-monitor.log
+    if command -v nvidia-smi > /dev/null; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] GPU: $(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo 'N/A')%" >> /var/log/system-monitor.log
+    fi
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Container: $(docker ps --format '{{.Names}} {{.Status}}' | grep ai-trainer || echo 'Not running')" >> /var/log/system-monitor.log
+    sleep 30
+done
+EOF
+    
+    chmod +x /usr/local/bin/simple-monitor
+    nohup /usr/local/bin/simple-monitor > /dev/null 2>&1 &
+    log "Monitor started"
 }
 
 # ========== POST-REBOOT ==========
 post_reboot() {
-    log_info "=== POST-REBOOT SETUP ==="
+    log "=== POST-REBOOT SETUP ==="
     
-    # Wait for services
-    sleep 30
+    # Wait for network and Docker
+    sleep 20
     until systemctl is-active --quiet docker; do
         sleep 5
     done
@@ -282,82 +245,15 @@ post_reboot() {
     # Login again
     docker_login
     
-    # Start monitoring
-    if [ ! -f /var/run/batch-monitor.pid ] || ! ps -p $(cat /var/run/batch-monitor.pid) > /dev/null 2>&1; then
-        start_batch_monitor
-    fi
+    # Run container setup
+    run_container_setup
     
-    # Run container
-    if docker_pull; then
-        run_container
-    fi
+    log "=== POST-REBOOT COMPLETE ==="
+    echo "POST_REBOOT_COMPLETE" > "$BATCH_STATUS_FILE"
     
-    log_info "=== POST-REBOOT COMPLETE ==="
-    echo "COMPLETE" > "$BATCH_STATUS_FILE"
-}
-
-# ========== STATUS COMMANDS ==========
-# These commands can be run via Azure Batch job manager tasks
-
-check_status() {
-    echo "=== AZURE BATCH STATUS CHECK: $(date) ==="
-    echo "Install Log: $INSTALL_LOG"
-    echo "Container Log: $CONTAINER_LOG"
-    echo "Monitor Log: $MONITOR_LOG"
-    echo ""
-    
-    # Overall status
-    if [ -f "$BATCH_STATUS_FILE" ]; then
-        echo "Task Status: $(cat "$BATCH_STATUS_FILE")"
-    else
-        echo "Task Status: UNKNOWN"
-    fi
-    echo ""
-    
-    # Container status
-    if sudo docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
-        echo "Container: RUNNING"
-        sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep "$CONTAINER_NAME"
-    else
-        echo "Container: NOT RUNNING"
-    fi
-    echo ""
-    
-    # GPU status
-    if command -v nvidia-smi &> /dev/null; then
-        echo "GPU Status:"
-        nvidia-smi --query-gpu=name,utilization.gpu,temperature.gpu --format=csv
-    else
-        echo "GPU: Not available"
-    fi
-    echo ""
-    
-    # Recent logs
-    echo "=== RECENT INSTALL LOG (last 10 lines) ==="
-    tail -10 "$INSTALL_LOG"
-    echo ""
-    echo "=== RECENT MONITOR LOG (last 5 entries) ==="
-    tail -20 "$MONITOR_LOG" | grep -A 1 "SYSTEM STATUS" | tail -10
-}
-
-show_logs() {
-    case "$1" in
-        install)
-            tail -f "$INSTALL_LOG"
-            ;;
-        container)
-            tail -f "$CONTAINER_LOG"
-            ;;
-        monitor)
-            tail -f "$MONITOR_LOG"
-            ;;
-        docker)
-            sudo docker logs -f "$CONTAINER_NAME"
-            ;;
-        *)
-            echo "Usage: $0 logs {install|container|monitor|docker}"
-            ;;
-    esac
+    # Remove the reboot service
+    systemctl disable post-reboot.service 2>/dev/null || true
+    rm -f /etc/systemd/system/post-reboot.service
 }
 
 # ========== MAIN ==========
@@ -367,32 +263,31 @@ main() {
             post_reboot
             ;;
         "status")
-            check_status
+            echo "=== STATUS ==="
+            echo "Install log: $INSTALL_LOG"
+            tail -20 "$INSTALL_LOG"
+            echo ""
+            echo "Container:"
+            docker ps | grep "$CONTAINER_NAME" || echo "Not running"
+            echo ""
+            echo "GPU:"
+            command -v nvidia-smi && nvidia-smi --query-gpu=name,utilization.gpu --format=csv || echo "Not available"
             ;;
         "logs")
-            show_logs "$2"
+            tail -f "$INSTALL_LOG"
             ;;
-        "install-only")
-            install_all
+        "container-logs")
+            docker logs -f "$CONTAINER_NAME"
             ;;
-        "start-only")
-            docker_login
-            docker_pull
-            run_container
-            ;;
-        "batch-mode")
-            # Main Azure Batch mode - run everything
-            install_all
-            
-            # Keep running for Azure Batch
-            log_info "Azure Batch start task running..."
-            while true; do
-                sleep 3600
-            done
+        "monitor-logs")
+            tail -f /var/log/system-monitor.log
             ;;
         *)
-            # Default: run in batch mode
+            # Default: full installation
             install_all
+            
+            # Keep alive for Azure Batch
+            log "Azure Batch task running..."
             while true; do
                 sleep 3600
             done
@@ -400,7 +295,7 @@ main() {
     esac
 }
 
-# Run main
+# Run
 if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
     main "$@"
 fi
