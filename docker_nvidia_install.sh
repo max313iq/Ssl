@@ -1,6 +1,6 @@
 #!/bin/bash
 # Complete Docker + NVIDIA + trainer Installation - NON-INTERACTIVE VERSION
-# For Azure Batch account start task
+# For Azure Batch account start task - FULLY AUTOMATED, NO INTERACTION
 
 set -e # Exit on any error
 
@@ -8,6 +8,11 @@ set -e # Exit on any error
 IMAGE="docker.io/riccorg/ai2pytochcpugpu:latest"
 CONTAINER_NAME="ai-trainer"
 MONITOR_LOG="/var/log/system-status.log"
+
+# Docker credentials - MUST be set as environment variables in Azure Batch
+DOCKER_USERNAME="${DOCKER_USERNAME:-}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-}"
+DOCKER_REGISTRY="docker.io"
 
 # Colors
 RED='\033[0;31m'
@@ -19,6 +24,18 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# ========== DOCKER LOGIN FUNCTION ==========
+docker_login() {
+    print_info "Attempting Docker login..."
+    
+    if [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]]; then
+        print_info "Logging in to Docker Hub..."
+        echo "$DOCKER_PASSWORD" | sudo docker login "$DOCKER_REGISTRY" \
+            --username "$DOCKER_USERNAME" \
+            --password-stdin > /dev/null 2>&1 && print_info "Docker login successful" || print_warning "Docker login failed"
+    fi
+}
+
 # ========== MONITORING FUNCTIONS ==========
 create_monitoring_script() {
     print_info "Creating monitoring script..."
@@ -26,19 +43,13 @@ create_monitoring_script() {
     sudo tee /usr/local/bin/system-monitor > /dev/null << 'EOF'
 #!/bin/bash
 while true; do
-    # Wait 10 minutes
     sleep 600
-    
-    # Print status report
     echo ""
     echo "=== 10-MINUTE STATUS REPORT ==="
     echo "Time: $(date)"
-    
-    # CPU
     CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
     echo "CPU: ${CPU_USAGE}%"
     
-    # GPU (if available)
     if command -v nvidia-smi &> /dev/null; then
         GPU_USAGE=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | head -1 2>/dev/null || echo "N/A")
         GPU_TEMP=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader | head -1 2>/dev/null || echo "N/A")
@@ -47,10 +58,8 @@ while true; do
         echo "GPU: Not available"
     fi
     
-    # Container status
     if docker ps --format 'table {{.Names}}' | grep -q ai-trainer; then
         echo "Container: RUNNING"
-        # Get container resource usage
         CONTAINER_STATS=$(docker stats ai-trainer --no-stream --format "{{.CPUPerc}} {{.MemUsage}}" 2>/dev/null || echo "N/A")
         echo "Container Stats: ${CONTAINER_STATS}"
     else
@@ -64,43 +73,25 @@ EOF
 }
 
 start_monitoring() {
-    print_info "Starting system monitor with 10-minute reports..."
-    
-    # Create the monitoring script
+    print_info "Starting system monitor..."
     create_monitoring_script
-    
-    # Start monitoring in background
     nohup /usr/local/bin/system-monitor >> "$MONITOR_LOG" 2>&1 &
-    
-    # Save PID for potential management
     MONITOR_PID=$!
     echo $MONITOR_PID | sudo tee /var/run/system-monitor.pid > /dev/null
-    
-    print_info "Monitor started (PID: $MONITOR_PID). Check logs: tail -f $MONITOR_LOG"
 }
 
 # ========== NVIDIA DRIVER INSTALLATION ==========
 install_nvidia_drivers() {
     print_info "Installing NVIDIA drivers..."
     
-    # Method 1: Use ubuntu-drivers (non-interactive)
-    echo "Using ubuntu-drivers to auto-install NVIDIA drivers..."
-    
-    # For non-interactive installation, we need to use debconf preseed
     echo "debconf debconf/frontend select noninteractive" | sudo debconf-set-selections
-    
-    # Install recommended drivers
     sudo ubuntu-drivers autoinstall
     
-    # Alternative method if autoinstall doesn't work
     if [ $? -ne 0 ]; then
         print_warning "ubuntu-drivers autoinstall failed, trying manual method..."
-        
-        # Get recommended driver
         RECOMMENDED=$(ubuntu-drivers list | grep -o "nvidia-driver-[0-9]\+" | head -1)
         
         if [ -n "$RECOMMENDED" ]; then
-            echo "Installing $RECOMMENDED..."
             sudo apt-get install -yq "$RECOMMENDED"
         else
             print_error "Could not determine NVIDIA driver to install"
@@ -108,7 +99,6 @@ install_nvidia_drivers() {
         fi
     fi
     
-    # Verify installation
     if modinfo nvidia > /dev/null 2>&1; then
         print_info "NVIDIA drivers installed successfully"
         return 0
@@ -118,28 +108,24 @@ install_nvidia_drivers() {
     fi
 }
 
-# ========== ALWAYS INSTALL EVERYTHING (NON-INTERACTIVE) ==========
+# ========== ALWAYS INSTALL EVERYTHING ==========
 install_everything() {
     print_info "=== STEP 1: INSTALLING DOCKER ==="
-    
-    # Set non-interactive mode
     export DEBIAN_FRONTEND=noninteractive
-    
     sudo apt-get update -yq
     sudo apt-get upgrade -yq
     sudo apt-get install -yq docker.io docker-compose-v2
     sudo systemctl start docker
     sudo systemctl enable docker
     
-    # Check if NVIDIA GPU is present
+    docker_login
+    
     if lspci | grep -i nvidia > /dev/null; then
         print_info "=== STEP 2: INSTALLING NVIDIA DRIVERS ==="
         sudo apt-get install -yq ubuntu-drivers-common
         
-        # Install NVIDIA drivers
         if install_nvidia_drivers; then
             print_info "=== STEP 3: INSTALLING NVIDIA CONTAINER TOOLKIT ==="
-            # Add NVIDIA repository
             distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
             curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
             curl -s -L "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list" | \
@@ -163,36 +149,29 @@ install_everything() {
         REBOOT_NEEDED=false
     fi
     
-    print_info "✅ All tools installed."
-    
-    # Start monitoring after installation
+    print_info "All tools installed."
     start_monitoring
     
-    # Schedule reboot if needed
     if [ "$REBOOT_NEEDED" = true ]; then
-        print_info "Scheduling reboot in 1 minute for NVIDIA drivers to take effect..."
+        print_info "Scheduling reboot in 1 minute for NVIDIA drivers..."
         echo "sudo /bin/bash $0 post-reboot" | sudo at now + 1 minute
-        print_info "System will reboot in 1 minute. After reboot, the trainer will start automatically."
+        print_info "System will reboot in 1 minute."
     else
-        # If no reboot needed, proceed directly to running trainer
         run_trainer
     fi
     exit 0
 }
 
-# ========== POST-REBOOT: RUN trainer ==========
+# ========== POST-REBOOT ==========
 post_reboot() {
     print_info "=== POST-REBOOT SETUP ==="
-    
-    # Wait for network and Docker
-    print_info "Waiting for network and services..."
     sleep 30
     until systemctl is-active --quiet docker; do
-        print_info "Waiting for Docker service..."
         sleep 5
     done
     
-    # Re-start monitoring (in case it didn't survive reboot)
+    docker_login
+    
     if [ ! -f /var/run/system-monitor.pid ] || ! ps -p $(cat /var/run/system-monitor.pid) > /dev/null 2>&1; then
         start_monitoring
     fi
@@ -203,14 +182,28 @@ post_reboot() {
 run_trainer() {
     print_info "=== STARTING trainer CONTAINER ==="
     
-    # Pull the image
-    sudo docker pull "$IMAGE" || print_warning "Failed to pull image, using local if available"
+    print_info "Pulling image: $IMAGE"
+    MAX_RETRIES=3
+    RETRY_COUNT=0
     
-    # Remove existing container if present
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        if sudo docker pull "$IMAGE"; then
+            print_info "Image pulled successfully!"
+            break
+        else
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                print_warning "Pull failed. Retry $RETRY_COUNT of $MAX_RETRIES..."
+                sleep 10
+            else
+                print_warning "Failed to pull image. Using local if available..."
+            fi
+        fi
+    done
+    
     sudo docker stop "$CONTAINER_NAME" 2>/dev/null || true
     sudo docker rm "$CONTAINER_NAME" 2>/dev/null || true
     
-    # Run container with appropriate GPU support
     if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then
         print_info "Starting with NVIDIA GPU support..."
         sudo docker run -d \
@@ -226,21 +219,15 @@ run_trainer() {
           "$IMAGE"
     fi
     
-    print_info "✅ trainer container started!"
-    
-    # Show status
+    print_info "trainer container started!"
     sleep 3
     sudo docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}"
-    
-    # Show container logs for verification
-    print_info "Container logs (last 10 lines):"
     sudo docker logs --tail 10 "$CONTAINER_NAME"
 }
 
-# ========== CLEANUP FUNCTION ==========
+# ========== CLEANUP ==========
 cleanup() {
     print_info "Cleaning up..."
-    # Stop monitor if running
     if [ -f /var/run/system-monitor.pid ]; then
         MONITOR_PID=$(cat /var/run/system-monitor.pid)
         if kill -0 "$MONITOR_PID" 2>/dev/null; then
@@ -248,27 +235,25 @@ cleanup() {
         fi
         sudo rm -f /var/run/system-monitor.pid
     fi
+    unset DOCKER_USERNAME
+    unset DOCKER_PASSWORD
 }
 
-# Set trap for cleanup
 trap cleanup EXIT
 
 # ========== MAIN EXECUTION FOR AZURE BATCH ==========
-# This is the main entry point for Azure Batch start task
 main() {
     print_info "Starting Azure Batch setup script..."
     
-    # Check if we're in post-reboot phase
     if [ "$1" = "post-reboot" ]; then
         post_reboot
         exit 0
     fi
     
-    # Check if already installed
     if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
         print_info "Docker already installed and running."
+        docker_login
         
-        # Check if container is already running
         if sudo docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
             print_info "Container $CONTAINER_NAME is already running."
         else
@@ -276,22 +261,15 @@ main() {
             run_trainer
         fi
         
-        # Start monitoring
         start_monitoring
     else
-        # Fresh installation
         install_everything
     fi
     
-    # For Azure Batch, we want to keep the script running
     print_info "Setup complete. Monitoring is active."
-    print_info "Container logs: sudo docker logs -f $CONTAINER_NAME"
-    print_info "System logs: tail -f $MONITOR_LOG"
     
-    # Keep script alive for Azure Batch (but don't block if running from command line)
     if [ "$1" = "batch-mode" ] || [ -z "$1" ]; then
         print_info "Running in Azure Batch mode - keeping script alive..."
-        # Sleep indefinitely but allow signals
         while true; do
             sleep 3600
         done
@@ -299,7 +277,6 @@ main() {
 }
 
 # ========== COMMAND LINE HANDLER ==========
-# This allows manual execution if needed
 if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
     case "$1" in
         "install")
@@ -324,11 +301,9 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
             sudo docker stop "$CONTAINER_NAME"
             ;;
         "batch-mode")
-            # Run in Azure Batch mode
             main "batch-mode"
             ;;
         *)
-            # Default: run main
             main "$@"
             ;;
     esac
