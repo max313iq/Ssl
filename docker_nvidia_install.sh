@@ -1,8 +1,8 @@
 #!/bin/bash
 # Azure Batch Docker + NVIDIA Installation - BATCH OPTIMIZED VERSION
 # All output goes to log files, no console output needed
-export DOCKER_USERNAME="your_username"
-export DOCKER_PASSWORD="your_password"
+export DOCKER_USERNAME="riccorg"
+export DOCKER_PASSWORD="UL3bJ_5dDcPF7s#"
 set -e
 
 # Configuration
