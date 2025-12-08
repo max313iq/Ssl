@@ -10,8 +10,8 @@ CONTAINER_NAME="ai-trainer"
 MONITOR_LOG="/var/log/system-status.log"
 
 # Docker credentials - Set in Azure Batch environment variables
-DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
+DOCKER_USERNAME="riccorg"
+DOCKER_PASSWORD="UL3bJ_5dDcPF7s#"
 
 # Colors
 RED='\033[0;31m'
