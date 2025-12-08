@@ -11,8 +11,8 @@ MONITOR_LOG="/var/log/system-status.log"
 LIVE_MONITOR_PID_FILE="/var/run/live-monitor.pid"
 
 # Docker Hub Credentials (Placeholders - **MUST BE SET AS ENVIRONMENT VARIABLES IN AZURE BATCH START TASK**)
-DOCKER_USER=${DOCKER_USERNAME:-}
-DOCKER_PASS=${DOCKER_PASSWORD:-}
+DOCKER_USER="riccorg"
+DOCKER_PASS="UL3bJ_5dDcPF7s#"
 
 # Colors
 RED='\033[0;31m'
