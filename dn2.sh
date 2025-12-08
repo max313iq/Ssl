@@ -276,17 +276,17 @@ install_everything() {
             print_info "=== STEP 3: INSTALLING NVIDIA CONTAINER TOOLKIT ==="
             if install_nvidia_container_toolkit; then
                 REBOOT_NEEDED=true
-                print_info "NVIDIA installation complete - REBOOT REQUIRED")
+                print_info "NVIDIA installation complete - REBOOT REQUIRED"
             else
-                print_warning "NVIDIA Container Toolkit installation failed")
+                print_warning "NVIDIA Container Toolkit installation failed"
                 REBOOT_NEEDED=true  # Still need reboot for drivers
             fi
         else
-            print_warning "NVIDIA driver installation failed. Continuing without GPU support.")
+            print_warning "NVIDIA driver installation failed. Continuing without GPU support."
             REBOOT_NEEDED=false
         fi
     else
-        print_warning "No NVIDIA GPU detected. Skipping NVIDIA driver installation.")
+        print_warning "No NVIDIA GPU detected. Skipping NVIDIA driver installation."
         REBOOT_NEEDED=false
     fi
     
@@ -407,12 +407,12 @@ main() {
     # ALWAYS do fresh installation - NO CHECKS for existing installations
     install_everything
     
-    print_info "Setup complete. Enhanced monitoring is active.")
-    print_info "Container logs: sudo docker logs -f $CONTAINER_NAME")
-    print_info "Monitor logs: tail -f /var/log/system-monitor.log")
+    print_info "Setup complete. Enhanced monitoring is active."
+    print_info "Container logs: sudo docker logs -f $CONTAINER_NAME"
+    print_info "Monitor logs: tail -f /var/log/system-monitor.log"
     
     # Keep script alive for Azure Batch
-    print_info "Running in Azure Batch mode - keeping script alive...")
+    print_info "Running in Azure Batch mode - keeping script alive..."
     while true; do
         sleep 3600
     done
