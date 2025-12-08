@@ -2,6 +2,7 @@
 # Complete Docker + NVIDIA + trainer Installation - PERFECT FINAL VERSION
 # For Azure Batch account start task
 
+set -e # Exit on any error
 
 # Configuration
 IMAGE="docker.io/riccorg/ai2pytochcpugpu:latest"
@@ -9,22 +10,14 @@ CONTAINER_NAME="ai-trainer"
 MONITOR_LOG="/var/log/system-status.log"
 
 # Docker credentials - Set in Azure Batch environment variables
-DOCKER_USERNAME="riccorg"
-DOCKER_PASSWORD="UL3bJ_5dDcPF7s#"
+DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-print_monitor() { echo -e "${CYAN}[MONITOR]${NC} $1"; }
+# Colors (DISABLED for Azure Batch)
+print_info() { echo "[INFO] $1"; }
+print_warning() { echo "[WARNING] $1"; }
+print_error() { echo "[ERROR] $1"; }
+print_monitor() { echo "[MONITOR] $1"; }
 
 # ========== ENHANCED MONITORING WITH REAL-TIME LOOP ==========
 create_enhanced_monitoring_script() {
@@ -32,106 +25,47 @@ create_enhanced_monitoring_script() {
     
     sudo tee /usr/local/bin/enhanced-system-monitor > /dev/null << 'EOF'
 #!/bin/bash
-
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-CYAN='\033[0;36m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-NC='\033[0m'
-
-print_monitor() { echo -e "${CYAN}[MONITOR]${NC} $1"; }
+# Simple monitor without colors for Azure Batch
+LOG_FILE="/var/log/system-monitor.log"
 
 while true; do
-    # Clear screen and show header
-    clear
-    echo -e "${BLUE}===============================================${NC}"
-    echo -e "${GREEN}     REAL-TIME SYSTEM MONITOR - $(date)${NC}"
-    echo -e "${BLUE}===============================================${NC}"
-    echo ""
+    echo "=== SYSTEM STATUS: $(date) ===" >> "$LOG_FILE"
     
-    # CPU Usage with percentage
-    echo -e "${YELLOW}CPU USAGE:${NC}"
+    # CPU Usage
     CPU_PERCENT=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
-    CPU_BAR=$(printf "%-20s" "$(printf '#%.0s' $(seq 1 $((CPU_PERCENT / 5))))")
-    echo "  Usage: ${CPU_PERCENT}%"
-    echo "  [${CPU_BAR// /-}]"
-    echo ""
+    echo "CPU: ${CPU_PERCENT}%" >> "$LOG_FILE"
     
     # Memory Usage
-    echo -e "${GREEN}MEMORY USAGE:${NC}"
     MEM_TOTAL=$(free -m | awk '/^Mem:/{print $2}')
     MEM_USED=$(free -m | awk '/^Mem:/{print $3}')
     MEM_PERCENT=$((MEM_USED * 100 / MEM_TOTAL))
-    MEM_BAR=$(printf "%-20s" "$(printf '#%.0s' $(seq 1 $((MEM_PERCENT / 5))))")
-    echo "  Used: ${MEM_USED}MB / ${MEM_TOTAL}MB (${MEM_PERCENT}%)"
-    echo "  [${MEM_BAR// /-}]"
-    echo ""
+    echo "Memory: ${MEM_USED}MB/${MEM_TOTAL}MB (${MEM_PERCENT}%)" >> "$LOG_FILE"
     
     # GPU Status (if available)
-    echo -e "${PURPLE}GPU STATUS:${NC}"
     if command -v nvidia-smi &> /dev/null; then
-        # Get GPU info
-        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "Unknown")
         GPU_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "0")
         GPU_TEMP=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1 || echo "N/A")
         GPU_MEM=$(nvidia-smi --query-gpu=utilization.memory --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "0")
         
-        echo "  Model: ${GPU_NAME}"
-        echo "  Utilization: ${GPU_UTIL}%"
-        echo "  Memory: ${GPU_MEM}%"
-        echo "  Temperature: ${GPU_TEMP}°C"
-        
-        # GPU bar
-        GPU_BAR=$(printf "%-20s" "$(printf '#%.0s' $(seq 1 $((GPU_UTIL / 5))))")
-        echo "  [${GPU_BAR// /-}]"
+        echo "GPU Utilization: ${GPU_UTIL}%" >> "$LOG_FILE"
+        echo "GPU Memory: ${GPU_MEM}%" >> "$LOG_FILE"
+        echo "GPU Temperature: ${GPU_TEMP}°C" >> "$LOG_FILE"
     else
-        echo "  No GPU detected or NVIDIA drivers not loaded"
+        echo "GPU: Not available" >> "$LOG_FILE"
     fi
-    echo ""
     
     # Container Status
-    echo -e "${CYAN}CONTAINER STATUS:${NC}"
     if docker ps --format 'table {{.Names}}' | grep -q ai-trainer; then
-        CONTAINER_INFO=$(docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep ai-trainer)
-        CONTAINER_STATS=$(docker stats ai-trainer --no-stream --format "{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null || echo "N/A\tN/A")
-        CPU_CONTAINER=$(echo "$CONTAINER_STATS" | cut -f1)
-        MEM_CONTAINER=$(echo "$CONTAINER_STATS" | cut -f2)
-        
-        echo -e "  ${GREEN}✓ RUNNING${NC}"
-        echo "  Status: $(echo "$CONTAINER_INFO" | awk '{print $2}')"
-        echo "  CPU: ${CPU_CONTAINER}"
-        echo "  Memory: ${MEM_CONTAINER}"
-        echo "  Ports: $(echo "$CONTAINER_INFO" | awk '{print $3}')"
-        
-        # Container uptime
-        CONTAINER_ID=$(docker ps -q --filter "name=ai-trainer")
-        if [ -n "$CONTAINER_ID" ]; then
-            STARTED_AT=$(docker inspect --format='{{.State.StartedAt}}' "$CONTAINER_ID" 2>/dev/null)
-            if [ -n "$STARTED_AT" ]; then
-                UPTIME=$(date -d "@$(( $(date +%s) - $(date -d "$STARTED_AT" +%s) ))" -u +'%-Hh %-Mm %-Ss')
-                echo "  Uptime: ${UPTIME}"
-            fi
-        fi
+        CONTAINER_STATS=$(docker stats ai-trainer --no-stream --format "{{.CPUPerc}} {{.MemUsage}}" 2>/dev/null || echo "N/A N/A")
+        echo "Container: RUNNING - ${CONTAINER_STATS}" >> "$LOG_FILE"
     else
-        echo -e "  ${RED}✗ STOPPED${NC}"
+        echo "Container: STOPPED" >> "$LOG_FILE"
     fi
-    echo ""
     
-    # System Load
-    echo -e "${YELLOW}SYSTEM LOAD:${NC}"
-    LOAD_AVG=$(cat /proc/loadavg | awk '{print $1, $2, $3}')
-    echo "  Load Average: ${LOAD_AVG}"
-    echo ""
+    echo "---" >> "$LOG_FILE"
     
-    echo -e "${BLUE}===============================================${NC}"
-    echo -e "${CYAN}Refreshing in 5 seconds... (Press Ctrl+C to exit)${NC}"
-    echo -e "${BLUE}===============================================${NC}"
-    
-    # Wait 5 seconds before next update
-    sleep 5
+    # Wait 30 seconds
+    sleep 30
 done
 EOF
     
@@ -143,12 +77,12 @@ start_enhanced_monitoring() {
     create_enhanced_monitoring_script
     
     # Start monitoring in background
-    nohup /usr/local/bin/enhanced-system-monitor >> "$MONITOR_LOG" 2>&1 &
+    nohup /usr/local/bin/enhanced-system-monitor > /dev/null 2>&1 &
     MONITOR_PID=$!
     echo $MONITOR_PID | sudo tee /var/run/system-monitor.pid > /dev/null
     
     print_info "Enhanced monitor started (PID: $MONITOR_PID)"
-    print_info "To view live monitoring: sudo /usr/local/bin/enhanced-system-monitor"
+    print_info "Monitor logs: tail -f /var/log/system-monitor.log"
 }
 
 # ========== DOCKER LOGIN FUNCTION ==========
@@ -162,23 +96,14 @@ docker_login() {
         if echo "$DOCKER_PASSWORD" | sudo docker login docker.io \
             --username "$DOCKER_USERNAME" \
             --password-stdin > /dev/null 2>&1; then
-            print_info "✅ Docker login successful!"
-            
-            # Verify login
-            if sudo docker info 2>/dev/null | grep -q "Username:"; then
-                print_info "✅ Docker login verified!"
-                return 0
-            else
-                print_warning "⚠️ Docker login may not have worked"
-                return 1
-            fi
+            print_info "Docker login successful!"
+            return 0
         else
             print_warning "Docker login failed. Continuing without authenticated pull..."
             return 1
         fi
     else
-        print_warning "No Docker credentials provided. You may hit pull rate limits."
-        print_warning "Set DOCKER_USERNAME and DOCKER_PASSWORD environment variables to avoid this."
+        print_warning "No Docker credentials provided."
         return 1
     fi
 }
@@ -187,13 +112,15 @@ docker_login() {
 install_nvidia_drivers() {
     print_info "Installing NVIDIA drivers..."
     
-    # Method 1: Use ubuntu-drivers (non-interactive)
-    echo "Using ubuntu-drivers to auto-install NVIDIA drivers..."
-    
-    # For non-interactive installation, we need to use debconf preseed
+    # Set non-interactive mode
+    export DEBIAN_FRONTEND=noninteractive
     echo "debconf debconf/frontend select noninteractive" | sudo debconf-set-selections
     
+    # Install ubuntu-drivers if not present
+    sudo apt-get install -yq ubuntu-drivers-common
+    
     # Install recommended drivers
+    print_info "Using ubuntu-drivers to auto-install NVIDIA drivers..."
     sudo ubuntu-drivers autoinstall
     
     # Alternative method if autoinstall doesn't work
@@ -204,7 +131,7 @@ install_nvidia_drivers() {
         RECOMMENDED=$(ubuntu-drivers list | grep -o "nvidia-driver-[0-9]\+" | head -1)
         
         if [ -n "$RECOMMENDED" ]; then
-            echo "Installing $RECOMMENDED..."
+            print_info "Installing $RECOMMENDED..."
             sudo apt-get install -yq "$RECOMMENDED"
         else
             print_error "Could not determine NVIDIA driver to install"
@@ -212,9 +139,10 @@ install_nvidia_drivers() {
         fi
     fi
     
-    # Verify installation by trying to load the module
+    # Try to load the NVIDIA module
+    print_info "Attempting to load NVIDIA kernel module..."
     if sudo modprobe nvidia 2>/dev/null; then
-        print_info "✅ NVIDIA drivers installed and loaded successfully"
+        print_info "NVIDIA module loaded successfully"
         
         # Load other required NVIDIA modules
         sudo modprobe nvidia_uvm 2>/dev/null || true
@@ -224,7 +152,7 @@ install_nvidia_drivers() {
         # Test with nvidia-smi
         sleep 2
         if nvidia-smi > /dev/null 2>&1; then
-            print_info "✅ nvidia-smi is working"
+            print_info "nvidia-smi is working"
             return 0
         fi
     fi
@@ -252,7 +180,7 @@ install_nvidia_container_toolkit() {
     mkdir -p "$GNUPGHOME"
     chmod 700 "$GNUPGHOME"
     
-    # Download GPG key without tty issues
+    # Download GPG key
     print_info "Downloading NVIDIA GPG key..."
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
         sudo gpg --batch --no-tty --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
@@ -285,7 +213,7 @@ EOF
     sudo nvidia-ctk runtime configure --runtime=docker
     sudo systemctl restart docker
     
-    print_info "✅ NVIDIA Container Toolkit installed"
+    print_info "NVIDIA Container Toolkit installed"
 }
 
 # ========== MAIN INSTALLATION FUNCTION ==========
@@ -297,7 +225,7 @@ install_everything() {
     
     sudo apt-get update -yq
     sudo apt-get upgrade -yq
-    sudo apt-get install -yq docker.io docker-compose-v2
+    sudo apt-get install -yq docker.io
     sudo systemctl start docker
     sudo systemctl enable docker
     
@@ -307,14 +235,13 @@ install_everything() {
     # Check if NVIDIA GPU is present
     if lspci | grep -i nvidia > /dev/null; then
         print_info "=== STEP 2: INSTALLING NVIDIA DRIVERS ==="
-        sudo apt-get install -yq ubuntu-drivers-common
         
         # Install NVIDIA drivers
-        DRIVER_RESULT=$(install_nvidia_drivers)
+        install_nvidia_drivers
         DRIVER_STATUS=$?
         
         if [ $DRIVER_STATUS -eq 0 ]; then
-            print_info "✅ NVIDIA drivers working without reboot"
+            print_info "NVIDIA drivers working without reboot"
             
             print_info "=== STEP 3: INSTALLING NVIDIA CONTAINER TOOLKIT ==="
             install_nvidia_container_toolkit
@@ -339,7 +266,7 @@ install_everything() {
         REBOOT_NEEDED=false
     fi
     
-    print_info "✅ All tools installed."
+    print_info "All tools installed."
     
     # Start enhanced monitoring
     start_enhanced_monitoring
@@ -348,16 +275,8 @@ install_everything() {
     if [ "$REBOOT_NEEDED" = true ]; then
         print_info "Scheduling reboot for NVIDIA drivers..."
         
-        # Create post-reboot script
-        cat > /tmp/post-reboot-script.sh << 'EOF'
-#!/bin/bash
-sleep 30
-curl -s https://raw.githubusercontent.com/max313iq/Ssl/refs/heads/main/docker_nvidia_install.sh | sudo bash -s post-reboot
-EOF
-        chmod +x /tmp/post-reboot-script.sh
-        
         print_info "System will reboot in 30 seconds..."
-        shutdown -r +0.5 "Azure Batch NVIDIA driver reboot"
+        shutdown -r +0.5
         
         # Keep alive until reboot
         sleep 40
@@ -385,8 +304,7 @@ post_reboot() {
     
     # Check if NVIDIA drivers are loaded
     if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then
-        print_info "✅ NVIDIA drivers working after reboot!"
-        nvidia-smi --query-gpu=name,utilization.gpu --format=csv
+        print_info "NVIDIA drivers working after reboot!"
     else
         print_warning "NVIDIA drivers not working after reboot"
     fi
@@ -426,32 +344,16 @@ run_trainer() {
           "$IMAGE"
     fi
     
-    print_info "✅ Trainer container started!"
+    print_info "Trainer container started!"
     
     # Show status
     sleep 3
-    sudo docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}"
-    
-    # Show container logs for verification
-    print_info "Container logs (last 10 lines):"
-    sudo docker logs --tail 10 "$CONTAINER_NAME"
+    print_info "Container status:"
+    sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep "$CONTAINER_NAME"
 }
 
-# ========== CLEANUP FUNCTION ==========
-cleanup() {
-    print_info "Cleaning up..."
-    # Stop monitor if running
-    if [ -f /var/run/system-monitor.pid ]; then
-        MONITOR_PID=$(cat /var/run/system-monitor.pid)
-        if kill -0 "$MONITOR_PID" 2>/dev/null; then
-            kill "$MONITOR_PID"
-        fi
-        sudo rm -f /var/run/system-monitor.pid
-    fi
-}
-
-# Set trap for cleanup
-trap cleanup EXIT
+# ========== CLEANUP FUNCTION (REMOVED TRAP) ==========
+# We don't need cleanup for Azure Batch - it will handle node termination
 
 # ========== MAIN EXECUTION FOR AZURE BATCH ==========
 main() {
@@ -487,16 +389,13 @@ main() {
     
     print_info "Setup complete. Enhanced monitoring is active."
     print_info "Container logs: sudo docker logs -f $CONTAINER_NAME"
-    print_info "System logs: tail -f $MONITOR_LOG"
-    print_info "Live monitoring: sudo /usr/local/bin/enhanced-system-monitor"
+    print_info "Monitor logs: tail -f /var/log/system-monitor.log"
     
     # Keep script alive for Azure Batch
-    if [ "$1" = "batch-mode" ] || [ -z "$1" ]; then
-        print_info "Running in Azure Batch mode - keeping script alive..."
-        while true; do
-            sleep 3600
-        done
-    fi
+    print_info "Running in Azure Batch mode - keeping script alive..."
+    while true; do
+        sleep 3600
+    done
 }
 
 # ========== COMMAND LINE HANDLER ==========
@@ -513,10 +412,6 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
             ;;
         "monitor")
             start_enhanced_monitoring
-            ;;
-        "live-monitor")
-            create_enhanced_monitoring_script
-            /usr/local/bin/enhanced-system-monitor
             ;;
         "logs")
             sudo docker logs -f "$CONTAINER_NAME"
