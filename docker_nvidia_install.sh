@@ -2,7 +2,6 @@
 # Complete Docker + NVIDIA + trainer Installation - PERFECT FINAL VERSION
 # For Azure Batch account start task
 
-set -e # Exit on any error
 
 # Configuration
 IMAGE="docker.io/riccorg/ai2pytochcpugpu:latest"
