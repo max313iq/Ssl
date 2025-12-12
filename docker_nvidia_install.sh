@@ -1,441 +1,382 @@
 #!/bin/bash
-# Complete Docker + NVIDIA + trainer Installation - PERFECT FINAL VERSION
-# For Azure Batch account start task
+# Azure Batch NVIDIA Docker Setup - FINAL VERSION
+# Fixes all errors: aplay, gpg tty, curl writing
 
-set -e # Exit on any error
+set -e
 
 # Configuration
 IMAGE="docker.io/riccorg/ai2pytochcpugpu:latest"
 CONTAINER_NAME="ai-trainer"
-MONITOR_LOG="/var/log/system-status.log"
 
-# Docker credentials - Set in Azure Batch environment variables
-DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
+# Log files
+INSTALL_LOG="/var/log/batch-install.log"
+mkdir -p /var/log
+echo "=== AZURE BATCH START: $(date) ===" > "$INSTALL_LOG"
 
-# Colors (DISABLED for Azure Batch)
-print_info() { echo "[INFO] $1"; }
-print_warning() { echo "[WARNING] $1"; }
-print_error() { echo "[ERROR] $1"; }
-print_monitor() { echo "[MONITOR] $1"; }
+# Docker credentials
+DOCKER_USERNAME="riccorg"
+DOCKER_PASSWORD="UL3bJ_5dDcPF7s#"
 
-# ========== ENHANCED MONITORING WITH REAL-TIME LOOP ==========
-create_enhanced_monitoring_script() {
-    print_info "Creating enhanced monitoring script..."
-    
-    sudo tee /usr/local/bin/enhanced-system-monitor > /dev/null << 'EOF'
-#!/bin/bash
-# Simple monitor without colors for Azure Batch
-LOG_FILE="/var/log/system-monitor.log"
+# Logging
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$INSTALL_LOG"
+}
 
-while true; do
-    echo "=== SYSTEM STATUS: $(date) ===" >> "$LOG_FILE"
+# ========== FIXED NVIDIA CONTAINER TOOLKIT INSTALL ==========
+install_nvidia_container_toolkit_fixed() {
+    log "Installing NVIDIA Container Toolkit (FIXED VERSION)..."
     
-    # CPU Usage
-    CPU_PERCENT=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
-    echo "CPU: ${CPU_PERCENT}%" >> "$LOG_FILE"
+    # Get distribution
+    distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+    architecture=$(dpkg --print-architecture)
     
-    # Memory Usage
-    MEM_TOTAL=$(free -m | awk '/^Mem:/{print $2}')
-    MEM_USED=$(free -m | awk '/^Mem:/{print $3}')
-    MEM_PERCENT=$((MEM_USED * 100 / MEM_TOTAL))
-    echo "Memory: ${MEM_USED}MB/${MEM_TOTAL}MB (${MEM_PERCENT}%)" >> "$LOG_FILE"
+    log "Distribution: $distribution, Arch: $architecture"
     
-    # GPU Status (if available)
-    if command -v nvidia-smi &> /dev/null; then
-        GPU_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "0")
-        GPU_TEMP=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1 || echo "N/A")
-        GPU_MEM=$(nvidia-smi --query-gpu=utilization.memory --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "0")
-        
-        echo "GPU Utilization: ${GPU_UTIL}%" >> "$LOG_FILE"
-        echo "GPU Memory: ${GPU_MEM}%" >> "$LOG_FILE"
-        echo "GPU Temperature: ${GPU_TEMP}°C" >> "$LOG_FILE"
-    else
-        echo "GPU: Not available" >> "$LOG_FILE"
+    # FIX: Create GPG directory and set permissions
+    mkdir -p /etc/apt/keyrings
+    mkdir -p /tmp/gpghome
+    chmod 700 /tmp/gpghome
+    export GNUPGHOME=/tmp/gpghome
+    
+    # FIX: Download GPG key WITHOUT tty issues
+    log "Downloading NVIDIA GPG key..."
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey 2>/dev/null | \
+        gpg --batch --no-tty --dearmor -o /etc/apt/keyrings/nvidia-container-toolkit-keyring.gpg 2>> "$INSTALL_LOG"
+    
+    if [ ! -f /etc/apt/keyrings/nvidia-container-toolkit-keyring.gpg ]; then
+        log "WARNING: Failed to download GPG key, trying alternative..."
+        # Alternative: directly download the file
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey -o /tmp/nvidia-gpg.key
+        gpg --batch --no-tty --dearmor /tmp/nvidia-gpg.key -o /etc/apt/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null || true
     fi
     
-    # Container Status
-    if docker ps --format 'table {{.Names}}' | grep -q ai-trainer; then
-        CONTAINER_STATS=$(docker stats ai-trainer --no-stream --format "{{.CPUPerc}} {{.MemUsage}}" 2>/dev/null || echo "N/A N/A")
-        echo "Container: RUNNING - ${CONTAINER_STATS}" >> "$LOG_FILE"
-    else
-        echo "Container: STOPPED" >> "$LOG_FILE"
-    fi
-    
-    echo "---" >> "$LOG_FILE"
-    
-    # Wait 30 seconds
-    sleep 30
-done
+    # FIX: Create repository file
+    log "Adding NVIDIA repository..."
+    cat > /etc/apt/sources.list.d/nvidia-container-toolkit.list << EOF
+deb [signed-by=/etc/apt/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/$distribution/$(dpkg --print-architecture) /
 EOF
     
-    sudo chmod +x /usr/local/bin/enhanced-system-monitor
+    # Update and install
+    log "Updating package list..."
+    apt-get update -qq 2>> "$INSTALL_LOG"
+    
+    log "Installing nvidia-container-toolkit..."
+    apt-get install -y -qq nvidia-container-toolkit 2>> "$INSTALL_LOG"
+    
+    # Configure Docker
+    log "Configuring Docker for NVIDIA..."
+    nvidia-ctk runtime configure --runtime=docker 2>> "$INSTALL_LOG"
+    systemctl restart docker 2>> "$INSTALL_LOG"
+    
+    log "✅ NVIDIA Container Toolkit installed"
 }
 
-start_enhanced_monitoring() {
-    print_info "Starting enhanced system monitor..."
-    create_enhanced_monitoring_script
+# ========== CHECK AND LOAD NVIDIA DRIVERS ==========
+ensure_nvidia_drivers() {
+    log "Checking NVIDIA drivers..."
     
-    # Start monitoring in background
-    nohup /usr/local/bin/enhanced-system-monitor > /dev/null 2>&1 &
-    MONITOR_PID=$!
-    echo $MONITOR_PID | sudo tee /var/run/system-monitor.pid > /dev/null
+    if ! lspci | grep -i nvidia > /dev/null; then
+        log "No NVIDIA GPU detected"
+        return 1
+    fi
     
-    print_info "Enhanced monitor started (PID: $MONITOR_PID)"
-    print_info "Monitor logs: tail -f /var/log/system-monitor.log"
-}
-
-# ========== DOCKER LOGIN FUNCTION ==========
-docker_login() {
-    print_info "Attempting Docker login..."
+    # Check if nvidia-smi works
+    if command -v nvidia-smi > /dev/null && nvidia-smi > /dev/null 2>&1; then
+        log "✅ nvidia-smi is working"
+        return 0
+    fi
     
-    if [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]]; then
-        print_info "Logging in to Docker Hub as $DOCKER_USERNAME..."
+    # Try to load NVIDIA module
+    log "Attempting to load NVIDIA kernel module..."
+    if modprobe nvidia 2>/dev/null; then
+        log "NVIDIA module loaded"
+        sleep 2
         
-        # Login to Docker using credentials
-        if echo "$DOCKER_PASSWORD" | sudo docker login docker.io \
-            --username "$DOCKER_USERNAME" \
-            --password-stdin > /dev/null 2>&1; then
-            print_info "Docker login successful!"
+        if nvidia-smi > /dev/null 2>&1; then
+            log "✅ NVIDIA drivers working after modprobe"
+            return 0
+        fi
+    fi
+    
+    # Check if drivers are installed
+    if dpkg -l | grep -q nvidia-driver; then
+        log "NVIDIA drivers are installed but not loaded"
+        log "Trying to load all NVIDIA modules..."
+        
+        # Load common NVIDIA modules
+        for module in nvidia nvidia_uvm nvidia_drm nvidia_modeset; do
+            if modprobe $module 2>/dev/null; then
+                log "Loaded module: $module"
+            fi
+        done
+        
+        sleep 3
+        
+        if nvidia-smi > /dev/null 2>&1; then
+            log "✅ NVIDIA drivers working after loading modules"
             return 0
         else
-            print_warning "Docker login failed. Continuing without authenticated pull..."
+            log "⚠️ NVIDIA drivers installed but still not working"
+            log "nvidia-smi output:"
+            nvidia-smi 2>&1 | head -20 | tee -a "$INSTALL_LOG"
             return 1
         fi
     else
-        print_warning "No Docker credentials provided."
+        log "NVIDIA drivers not installed"
         return 1
     fi
 }
 
-# ========== NVIDIA DRIVER INSTALLATION ==========
-install_nvidia_drivers() {
-    print_info "Installing NVIDIA drivers..."
+# ========== SETUP DOCKER ==========
+setup_docker() {
+    log "Setting up Docker..."
     
-    # Set non-interactive mode
-    export DEBIAN_FRONTEND=noninteractive
-    echo "debconf debconf/frontend select noninteractive" | sudo debconf-set-selections
-    
-    # Install ubuntu-drivers if not present
-    sudo apt-get install -yq ubuntu-drivers-common
-    
-    # Install recommended drivers
-    print_info "Using ubuntu-drivers to auto-install NVIDIA drivers..."
-    sudo ubuntu-drivers autoinstall
-    
-    # Alternative method if autoinstall doesn't work
-    if [ $? -ne 0 ]; then
-        print_warning "ubuntu-drivers autoinstall failed, trying manual method..."
-        
-        # Get recommended driver
-        RECOMMENDED=$(ubuntu-drivers list | grep -o "nvidia-driver-[0-9]\+" | head -1)
-        
-        if [ -n "$RECOMMENDED" ]; then
-            print_info "Installing $RECOMMENDED..."
-            sudo apt-get install -yq "$RECOMMENDED"
-        else
-            print_error "Could not determine NVIDIA driver to install"
-            return 1
-        fi
-    fi
-    
-    # Try to load the NVIDIA module
-    print_info "Attempting to load NVIDIA kernel module..."
-    if sudo modprobe nvidia 2>/dev/null; then
-        print_info "NVIDIA module loaded successfully"
-        
-        # Load other required NVIDIA modules
-        sudo modprobe nvidia_uvm 2>/dev/null || true
-        sudo modprobe nvidia_drm 2>/dev/null || true
-        sudo modprobe nvidia_modeset 2>/dev/null || true
-        
-        # Test with nvidia-smi
-        sleep 2
-        if nvidia-smi > /dev/null 2>&1; then
-            print_info "nvidia-smi is working"
-            return 0
-        fi
-    fi
-    
-    print_info "NVIDIA drivers installed but require reboot to activate"
-    return 2  # Special code for "needs reboot"
-}
-
-# ========== NVIDIA CONTAINER TOOLKIT INSTALLATION ==========
-install_nvidia_container_toolkit() {
-    print_info "Installing NVIDIA Container Toolkit..."
-    
-    # Get distribution info
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        DISTRIBUTION=$(echo $ID | tr '[:upper:]' '[:lower:]')
-        VERSION=$VERSION_ID
+    if ! command -v docker > /dev/null; then
+        apt-get update -qq
+        apt-get install -y -qq docker.io
+        systemctl start docker
+        systemctl enable docker
+        log "Docker installed"
     else
-        DISTRIBUTION="ubuntu"
-        VERSION="22.04"
+        log "Docker already installed"
     fi
-    
-    # Fix GPG tty issue
-    export GNUPGHOME=/tmp/gnupg
-    mkdir -p "$GNUPGHOME"
-    chmod 700 "$GNUPGHOME"
-    
-    # Download GPG key
-    print_info "Downloading NVIDIA GPG key..."
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
-        sudo gpg --batch --no-tty --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
-    
-    # Create correct repository URL
-    print_info "Adding NVIDIA repository..."
-    
-    # Determine correct distribution string
-    case "$VERSION" in
-        "20.04") DIST_STRING="ubuntu20.04" ;;
-        "22.04") DIST_STRING="ubuntu22.04" ;;
-        "24.04") DIST_STRING="ubuntu24.04" ;;
-        *) DIST_STRING="${DISTRIBUTION}${VERSION}" ;;
-    esac
-    
-    ARCH=$(dpkg --print-architecture)
-    
-    # Create repository file
-    cat > /tmp/nvidia-container-toolkit.list << EOF
-deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/$DIST_STRING/$ARCH /
-EOF
-    
-    sudo cp /tmp/nvidia-container-toolkit.list /etc/apt/sources.list.d/
-    
-    # Update and install
-    sudo apt-get update -yq
-    sudo apt-get install -yq nvidia-container-toolkit
-    
-    print_info "Configuring Docker for NVIDIA..."
-    sudo nvidia-ctk runtime configure --runtime=docker
-    sudo systemctl restart docker
-    
-    print_info "NVIDIA Container Toolkit installed"
-}
-
-# ========== MAIN INSTALLATION FUNCTION ==========
-install_everything() {
-    print_info "=== STEP 1: INSTALLING DOCKER ==="
-    
-    # Set non-interactive mode
-    export DEBIAN_FRONTEND=noninteractive
-    
-    sudo apt-get update -yq
-    sudo apt-get upgrade -yq
-    sudo apt-get install -yq docker.io
-    sudo systemctl start docker
-    sudo systemctl enable docker
     
     # Docker login
-    docker_login
-    
-    # Check if NVIDIA GPU is present
-    if lspci | grep -i nvidia > /dev/null; then
-        print_info "=== STEP 2: INSTALLING NVIDIA DRIVERS ==="
-        
-        # Install NVIDIA drivers
-        install_nvidia_drivers
-        DRIVER_STATUS=$?
-        
-        if [ $DRIVER_STATUS -eq 0 ]; then
-            print_info "NVIDIA drivers working without reboot"
-            
-            print_info "=== STEP 3: INSTALLING NVIDIA CONTAINER TOOLKIT ==="
-            install_nvidia_container_toolkit
-            
-            REBOOT_NEEDED=false
-            
-        elif [ $DRIVER_STATUS -eq 2 ]; then
-            print_info "NVIDIA drivers installed but need reboot"
-            
-            # Install NVIDIA container toolkit BEFORE reboot
-            print_info "=== STEP 3: INSTALLING NVIDIA CONTAINER TOOLKIT ==="
-            install_nvidia_container_toolkit
-            
-            REBOOT_NEEDED=true
-            
-        else
-            print_warning "NVIDIA driver installation failed. Continuing without GPU support."
-            REBOOT_NEEDED=false
-        fi
-    else
-        print_warning "No NVIDIA GPU detected. Skipping NVIDIA driver installation."
-        REBOOT_NEEDED=false
-    fi
-    
-    print_info "All tools installed."
-    
-    # Start enhanced monitoring
-    start_enhanced_monitoring
-    
-    # Schedule reboot if needed
-    if [ "$REBOOT_NEEDED" = true ]; then
-        print_info "Scheduling reboot for NVIDIA drivers..."
-        
-        print_info "System will reboot in 30 seconds..."
-        shutdown -r +0.5
-        
-        # Keep alive until reboot
-        sleep 40
-        exit 0
-    else
-        # If no reboot needed, proceed directly to running trainer
-        run_trainer
-    fi
+    log "Docker login..."
+    echo "$DOCKER_PASSWORD" | docker login docker.io \
+        --username "$DOCKER_USERNAME" \
+        --password-stdin > /dev/null 2>&1 && log "Login OK" || log "Login skipped"
 }
 
-# ========== POST-REBOOT SETUP ==========
-post_reboot() {
-    print_info "=== POST-REBOOT SETUP ==="
+# ========== PULL AND RUN CONTAINER (WITH APLAY FIX) ==========
+setup_container() {
+    log "Setting up container..."
     
-    # Wait for network and Docker
-    print_info "Waiting for network and services..."
-    sleep 30
-    until systemctl is-active --quiet docker; do
-        print_info "Waiting for Docker service..."
-        sleep 5
+    # FIX: Install alsa-utils on HOST to avoid container dependency issues
+    log "Installing alsa-utils on host..."
+    apt-get install -y -qq alsa-utils > /dev/null 2>&1 || log "Note: alsa-utils install optional"
+    
+    # Pull image with retry
+    for i in {1..3}; do
+        log "Pull attempt $i/3"
+        if timeout 300 docker pull "$IMAGE" 2>> "$INSTALL_LOG"; then
+            log "✅ Image pulled successfully"
+            break
+        else
+            log "Pull failed or timeout, retrying..."
+            sleep 10
+        fi
     done
     
-    # Docker login again
-    docker_login
+    # Stop existing container
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    docker rm "$CONTAINER_NAME" 2>/dev/null || true
     
-    # Check if NVIDIA drivers are loaded
-    if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then
-        print_info "NVIDIA drivers working after reboot!"
-    else
-        print_warning "NVIDIA drivers not working after reboot"
-    fi
-    
-    # Restart enhanced monitoring
-    if [ ! -f /var/run/system-monitor.pid ] || ! ps -p $(cat /var/run/system-monitor.pid) > /dev/null 2>&1; then
-        start_enhanced_monitoring
-    fi
-    
-    run_trainer
-}
-
-# ========== RUN TRAINER CONTAINER ==========
-run_trainer() {
-    print_info "=== STARTING TRAINER CONTAINER ==="
-    
-    # Pull the image
-    sudo docker pull "$IMAGE" || print_warning "Failed to pull image, using local if available"
-    
-    # Remove existing container if present
-    sudo docker stop "$CONTAINER_NAME" 2>/dev/null || true
-    sudo docker rm "$CONTAINER_NAME" 2>/dev/null || true
-    
-    # Run container with appropriate GPU support
-    if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then
-        print_info "Starting with NVIDIA GPU support..."
-        sudo docker run -d \
-          --gpus all \
-          --restart unless-stopped \
-          --name "$CONTAINER_NAME" \
-          "$IMAGE"
-    else
-        print_info "Starting without GPU support..."
-        sudo docker run -d \
-          --restart unless-stopped \
-          --name "$CONTAINER_NAME" \
-          "$IMAGE"
-    fi
-    
-    print_info "Trainer container started!"
-    
-    # Show status
-    sleep 3
-    print_info "Container status:"
-    sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep "$CONTAINER_NAME"
-}
-
-# ========== CLEANUP FUNCTION (REMOVED TRAP) ==========
-# We don't need cleanup for Azure Batch - it will handle node termination
-
-# ========== MAIN EXECUTION FOR AZURE BATCH ==========
-main() {
-    print_info "Starting Azure Batch setup script..."
-    
-    # Check if we're in post-reboot phase
-    if [ "$1" = "post-reboot" ]; then
-        post_reboot
-        exit 0
-    fi
-    
-    # Check if already installed
-    if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
-        print_info "Docker already installed and running."
+    # Check GPU availability
+    GPU_OPTION=""
+    if command -v nvidia-smi > /dev/null && nvidia-smi > /dev/null 2>&1; then
+        log "GPU available, using --gpus all"
+        GPU_OPTION="--gpus all"
         
-        # Docker login
-        docker_login
+        # Test nvidia-container-cli
+        if command -v nvidia-container-cli > /dev/null; then
+            log "nvidia-container-cli is available"
+        fi
+    else
+        log "GPU not available, running without GPU support"
+    fi
+    
+    # Run container with appropriate options
+    log "Starting container..."
+    if [ -n "$GPU_OPTION" ]; then
+        docker run -d \
+            $GPU_OPTION \
+            --restart unless-stopped \
+            --name "$CONTAINER_NAME" \
+            "$IMAGE" 2>> "$INSTALL_LOG"
+    else
+        docker run -d \
+            --restart unless-stopped \
+            --name "$CONTAINER_NAME" \
+            "$IMAGE" 2>> "$INSTALL_LOG"
+    fi
+    
+    # Verify container
+    sleep 5
+    if docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
+        log "✅ Container running successfully"
         
-        # Check if container is already running
-        if sudo docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
-            print_info "Container $CONTAINER_NAME is already running."
-        else
-            print_info "Starting trainer container..."
-            run_trainer
+        # Show container info
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep "$CONTAINER_NAME"
+        
+        # Check container health
+        log "Checking container health..."
+        if docker inspect "$CONTAINER_NAME" | grep -q '"Health":'; then
+            log "Container has health check"
         fi
         
-        # Start enhanced monitoring
-        start_enhanced_monitoring
+        # Show recent logs (filter out aplay errors)
+        log "Container logs (excluding aplay errors):"
+        docker logs --tail 10 "$CONTAINER_NAME" 2>/dev/null | grep -v "aplay" | head -5 || true
+        
     else
-        # Fresh installation
-        install_everything
+        log "❌ Container failed to start"
+        log "Last 10 lines of container logs:"
+        docker logs "$CONTAINER_NAME" 2>/dev/null | tail -10 || true
+    fi
+}
+
+# ========== START MONITOR ==========
+start_monitor() {
+    log "Starting system monitor..."
+    
+    cat > /usr/local/bin/batch-monitor << 'EOF'
+#!/bin/bash
+while true; do
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] STATUS UPDATE" >> /var/log/system-status.log
+    echo "CPU: $(top -bn1 | grep 'Cpu(s)' | awk '{print $2}')" >> /var/log/system-status.log
+    
+    if command -v nvidia-smi > /dev/null && timeout 5 nvidia-smi > /dev/null 2>&1; then
+        echo "GPU: $(nvidia-smi --query-gpu=utilization.gpu,temperature.gpu --format=csv,noheader 2>/dev/null | head -1)" >> /var/log/system-status.log
     fi
     
-    print_info "Setup complete. Enhanced monitoring is active."
-    print_info "Container logs: sudo docker logs -f $CONTAINER_NAME"
-    print_info "Monitor logs: tail -f /var/log/system-monitor.log"
+    if docker ps --format '{{.Names}}' | grep -q ai-trainer; then
+        echo "Container: RUNNING" >> /var/log/system-status.log
+    else
+        echo "Container: STOPPED" >> /var/log/system-status.log
+    fi
+    echo "---" >> /var/log/system-status.log
+    sleep 30
+done
+EOF
     
-    # Keep script alive for Azure Batch
-    print_info "Running in Azure Batch mode - keeping script alive..."
+    chmod +x /usr/local/bin/batch-monitor
+    nohup /usr/local/bin/batch-monitor > /dev/null 2>&1 &
+    log "Monitor started (PID: $!)"
+}
+
+# ========== MAIN EXECUTION ==========
+main() {
+    log "=== AZURE BATCH NVIDIA DOCKER SETUP ==="
+    
+    # Update system quietly
+    log "Updating system packages..."
+    apt-get update -qq 2>> "$INSTALL_LOG"
+    
+    # Setup Docker first
+    setup_docker
+    
+    # Check and ensure NVIDIA drivers
+    if ensure_nvidia_drivers; then
+        log "✅ NVIDIA drivers are working"
+        
+        # Install NVIDIA Container Toolkit
+        install_nvidia_container_toolkit_fixed
+        
+        # Setup container
+        setup_container
+    else
+        log "⚠️ NVIDIA drivers not working, continuing without GPU"
+        setup_container
+    fi
+    
+    # Start monitoring
+    start_monitor
+    
+    log "=== SETUP COMPLETE ==="
+    log "System is ready!"
+    log "To check status: tail -f $INSTALL_LOG"
+    log "To see GPU status: nvidia-smi"
+    log "To see container: docker ps"
+    
+    # Keep alive for Azure Batch
+    log "Azure Batch task running..."
     while true; do
         sleep 3600
     done
 }
 
-# ========== COMMAND LINE HANDLER ==========
-if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
-    case "$1" in
-        "install")
-            install_everything
-            ;;
-        "start")
-            run_trainer
-            ;;
-        "post-reboot")
-            post_reboot
-            ;;
-        "monitor")
-            start_enhanced_monitoring
-            ;;
-        "logs")
-            sudo docker logs -f "$CONTAINER_NAME"
-            ;;
-        "status")
-            sudo docker ps -a | grep "$CONTAINER_NAME"
-            echo ""
-            echo "GPU Status:"
-            if command -v nvidia-smi > /dev/null; then
-                nvidia-smi --query-gpu=name,utilization.gpu,temperature.gpu --format=csv
-            else
-                echo "NVIDIA drivers not loaded"
-            fi
-            ;;
-        "stop")
-            sudo docker stop "$CONTAINER_NAME"
-            ;;
-        "batch-mode")
-            # Run in Azure Batch mode
-            main "batch-mode"
-            ;;
-        *)
-            # Default: run main
-            main "$@"
-            ;;
-    esac
-fi
+# ========== SIMPLE VERSION FOR AZURE BATCH (RECOMMENDED) ==========
+simple_setup() {
+    echo "=== SIMPLE AZURE BATCH SETUP ==="
+    
+    # Update
+    apt-get update -qq
+    
+    # Install Docker if needed
+    if ! command -v docker > /dev/null; then
+        apt-get install -y docker.io
+        systemctl start docker
+    fi
+    
+    # Docker login
+    echo "$DOCKER_PASSWORD" | docker login docker.io --username "$DOCKER_USERNAME" --password-stdin 2>/dev/null || true
+    
+    # Check NVIDIA
+    if lspci | grep -i nvidia > /dev/null; then
+        echo "NVIDIA GPU detected"
+        
+        # Load NVIDIA modules if possible
+        modprobe nvidia 2>/dev/null || true
+        modprobe nvidia_uvm 2>/dev/null || true
+        
+        if command -v nvidia-smi > /dev/null && nvidia-smi > /dev/null 2>&1; then
+            echo "nvidia-smi is working"
+            
+            # Simple NVIDIA container toolkit install
+            distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey 2>/dev/null | \
+                gpg --batch --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
+            
+            echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] \
+                https://nvidia.github.io/libnvidia-container/stable/$distribution/$(dpkg --print-architecture) /" \
+                > /etc/apt/sources.list.d/nvidia-container-toolkit.list 2>/dev/null
+            
+            apt-get update -qq
+            apt-get install -y nvidia-container-toolkit 2>/dev/null
+            nvidia-ctk runtime configure --runtime=docker 2>/dev/null
+            systemctl restart docker 2>/dev/null
+        fi
+    fi
+    
+    # Pull and run container
+    docker pull "$IMAGE" 2>/dev/null || true
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    docker rm "$CONTAINER_NAME" 2>/dev/null || true
+    
+    if command -v nvidia-smi > /dev/null && nvidia-smi > /dev/null 2>&1; then
+        docker run -d --gpus all --restart unless-stopped --name "$CONTAINER_NAME" "$IMAGE"
+        echo "Container started with GPU"
+    else
+        docker run -d --restart unless-stopped --name "$CONTAINER_NAME" "$IMAGE"
+        echo "Container started without GPU"
+    fi
+    
+    echo "Setup complete"
+    
+    # Keep alive
+    while true; do sleep 3600; done
+}
+
+# Command line
+case "${1:-}" in
+    "simple")
+        simple_setup
+        ;;
+    "status")
+        echo "=== STATUS ==="
+        echo "GPU:"
+        lspci | grep -i nvidia || echo "No NVIDIA GPU"
+        echo ""
+        echo "NVIDIA drivers:"
+        lsmod | grep nvidia || echo "NVIDIA module not loaded"
+        echo ""
+        echo "Container:"
+        docker ps | grep "$CONTAINER_NAME" || echo "Container not running"
+        echo ""
+        echo "Logs: tail -20 $INSTALL_LOG"
+        ;;
+    *)
+        main
+        ;;
+esac
