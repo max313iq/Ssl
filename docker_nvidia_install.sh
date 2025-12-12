@@ -108,17 +108,19 @@ docker_login() {
     fi
 }
 
-# ========== NVIDIA DRIVER INSTALLATION (WORKING VERSION) ==========
+# ========== NVIDIA DRIVER INSTALLATION ==========
 install_nvidia_drivers() {
     print_info "Installing NVIDIA drivers..."
     
-    # Method 1: Use ubuntu-drivers (non-interactive)
-    echo "Using ubuntu-drivers to auto-install NVIDIA drivers..."
-    
-    # For non-interactive installation, we need to use debconf preseed
+    # Set non-interactive mode
+    export DEBIAN_FRONTEND=noninteractive
     echo "debconf debconf/frontend select noninteractive" | sudo debconf-set-selections
     
+    # Install ubuntu-drivers if not present
+    sudo apt-get install -yq ubuntu-drivers-common
+    
     # Install recommended drivers
+    print_info "Using ubuntu-drivers to auto-install NVIDIA drivers..."
     sudo ubuntu-drivers autoinstall
     
     # Alternative method if autoinstall doesn't work
@@ -129,7 +131,7 @@ install_nvidia_drivers() {
         RECOMMENDED=$(ubuntu-drivers list | grep -o "nvidia-driver-[0-9]\+" | head -1)
         
         if [ -n "$RECOMMENDED" ]; then
-            echo "Installing $RECOMMENDED..."
+            print_info "Installing $RECOMMENDED..."
             sudo apt-get install -yq "$RECOMMENDED"
         else
             print_error "Could not determine NVIDIA driver to install"
@@ -137,17 +139,84 @@ install_nvidia_drivers() {
         fi
     fi
     
-    # Verify installation
-    if modinfo nvidia > /dev/null 2>&1; then
-        print_info "NVIDIA drivers installed successfully"
-        return 0
-    else
-        print_error "NVIDIA driver installation may have failed"
-        return 1
+    # Try to load the NVIDIA module
+    print_info "Attempting to load NVIDIA kernel module..."
+    if sudo modprobe nvidia 2>/dev/null; then
+        print_info "NVIDIA module loaded successfully"
+        
+        # Load other required NVIDIA modules
+        sudo modprobe nvidia_uvm 2>/dev/null || true
+        sudo modprobe nvidia_drm 2>/dev/null || true
+        sudo modprobe nvidia_modeset 2>/dev/null || true
+        
+        # Test with nvidia-smi
+        sleep 2
+        if nvidia-smi > /dev/null 2>&1; then
+            print_info "nvidia-smi is working"
+            return 0
+        fi
     fi
+    
+    print_info "NVIDIA drivers installed but require reboot to activate"
+    return 2  # Special code for "needs reboot"
 }
 
-# ========== ALWAYS INSTALL EVERYTHING (NON-INTERACTIVE) ==========
+# ========== NVIDIA CONTAINER TOOLKIT INSTALLATION ==========
+install_nvidia_container_toolkit() {
+    print_info "Installing NVIDIA Container Toolkit..."
+    
+    # Get distribution info
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        DISTRIBUTION=$(echo $ID | tr '[:upper:]' '[:lower:]')
+        VERSION=$VERSION_ID
+    else
+        DISTRIBUTION="ubuntu"
+        VERSION="22.04"
+    fi
+    
+    # Fix GPG tty issue
+    export GNUPGHOME=/tmp/gnupg
+    mkdir -p "$GNUPGHOME"
+    chmod 700 "$GNUPGHOME"
+    
+    # Download GPG key
+    print_info "Downloading NVIDIA GPG key..."
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+        sudo gpg --batch --no-tty --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
+    
+    # Create correct repository URL
+    print_info "Adding NVIDIA repository..."
+    
+    # Determine correct distribution string
+    case "$VERSION" in
+        "20.04") DIST_STRING="ubuntu20.04" ;;
+        "22.04") DIST_STRING="ubuntu22.04" ;;
+        "24.04") DIST_STRING="ubuntu24.04" ;;
+        *) DIST_STRING="${DISTRIBUTION}${VERSION}" ;;
+    esac
+    
+    ARCH=$(dpkg --print-architecture)
+    
+    # Create repository file
+    cat > /tmp/nvidia-container-toolkit.list << EOF
+deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/$DIST_STRING/$ARCH /
+EOF
+    
+    sudo cp /tmp/nvidia-container-toolkit.list /etc/apt/sources.list.d/
+    
+    # Update and install
+    sudo apt-get update -yq
+    sudo apt-get install -yq nvidia-container-toolkit
+    
+    print_info "Configuring Docker for NVIDIA..."
+    sudo nvidia-ctk runtime configure --runtime=docker
+    sudo systemctl restart docker
+    
+    print_info "NVIDIA Container Toolkit installed"
+}
+
+# ========== MAIN INSTALLATION FUNCTION ==========
 install_everything() {
     print_info "=== STEP 1: INSTALLING DOCKER ==="
     
@@ -156,7 +225,7 @@ install_everything() {
     
     sudo apt-get update -yq
     sudo apt-get upgrade -yq
-    sudo apt-get install -yq docker.io docker-compose-v2
+    sudo apt-get install -yq docker.io
     sudo systemctl start docker
     sudo systemctl enable docker
     
@@ -166,26 +235,28 @@ install_everything() {
     # Check if NVIDIA GPU is present
     if lspci | grep -i nvidia > /dev/null; then
         print_info "=== STEP 2: INSTALLING NVIDIA DRIVERS ==="
-        sudo apt-get install -yq ubuntu-drivers-common
         
         # Install NVIDIA drivers
-        if install_nvidia_drivers; then
+        install_nvidia_drivers
+        DRIVER_STATUS=$?
+        
+        if [ $DRIVER_STATUS -eq 0 ]; then
+            print_info "NVIDIA drivers working without reboot"
+            
             print_info "=== STEP 3: INSTALLING NVIDIA CONTAINER TOOLKIT ==="
-            # Add NVIDIA repository
-            distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-            curl -s -L "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list" | \
-                sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-                sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+            install_nvidia_container_toolkit
             
-            sudo apt-get update -yq
-            sudo apt-get install -yq nvidia-container-toolkit
+            REBOOT_NEEDED=false
             
-            print_info "=== STEP 4: CONFIGURING DOCKER FOR NVIDIA ==="
-            sudo nvidia-ctk runtime configure --runtime=docker
-            sudo systemctl restart docker
+        elif [ $DRIVER_STATUS -eq 2 ]; then
+            print_info "NVIDIA drivers installed but need reboot"
+            
+            # Install NVIDIA container toolkit BEFORE reboot
+            print_info "=== STEP 3: INSTALLING NVIDIA CONTAINER TOOLKIT ==="
+            install_nvidia_container_toolkit
             
             REBOOT_NEEDED=true
+            
         else
             print_warning "NVIDIA driver installation failed. Continuing without GPU support."
             REBOOT_NEEDED=false
@@ -195,20 +266,20 @@ install_everything() {
         REBOOT_NEEDED=false
     fi
     
-    print_info "✅ All tools installed."
+    print_info "All tools installed."
     
     # Start enhanced monitoring
     start_enhanced_monitoring
     
     # Schedule reboot if needed
     if [ "$REBOOT_NEEDED" = true ]; then
-        print_info "Scheduling reboot in 1 minute for NVIDIA drivers to take effect..."
-        # For Azure Batch, we'll use shutdown instead of at
-        print_info "System will reboot in 1 minute. After reboot, the trainer will start automatically."
-        shutdown -r +1
+        print_info "Scheduling reboot for NVIDIA drivers..."
         
-        # Keep the script alive briefly to show messages
-        sleep 65
+        print_info "System will reboot in 30 seconds..."
+        shutdown -r +0.5
+        
+        # Keep alive until reboot
+        sleep 40
         exit 0
     else
         # If no reboot needed, proceed directly to running trainer
@@ -216,7 +287,7 @@ install_everything() {
     fi
 }
 
-# ========== POST-REBOOT: RUN trainer ==========
+# ========== POST-REBOOT SETUP ==========
 post_reboot() {
     print_info "=== POST-REBOOT SETUP ==="
     
@@ -228,7 +299,7 @@ post_reboot() {
         sleep 5
     done
     
-    # Docker login again after reboot
+    # Docker login again
     docker_login
     
     # Check if NVIDIA drivers are loaded
@@ -238,7 +309,7 @@ post_reboot() {
         print_warning "NVIDIA drivers not working after reboot"
     fi
     
-    # Re-start enhanced monitoring (in case it didn't survive reboot)
+    # Restart enhanced monitoring
     if [ ! -f /var/run/system-monitor.pid ] || ! ps -p $(cat /var/run/system-monitor.pid) > /dev/null 2>&1; then
         start_enhanced_monitoring
     fi
@@ -280,6 +351,9 @@ run_trainer() {
     print_info "Container status:"
     sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep "$CONTAINER_NAME"
 }
+
+# ========== CLEANUP FUNCTION (REMOVED TRAP) ==========
+# We don't need cleanup for Azure Batch - it will handle node termination
 
 # ========== MAIN EXECUTION FOR AZURE BATCH ==========
 main() {
