@@ -121,10 +121,10 @@ fi
 # Test Docker GPU access
 # ---------------------------
 echo "=== Testing Docker GPU access ==="
-docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+sudo docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
 
 # ---------------------------
 # Run application container
 # ---------------------------
 echo "=== Starting GPU container ==="
-docker run --rm --gpus all riccorg/ml-compute-platform:latest
+sudo docker run --rm --gpus all riccorg/ml-compute-platform:latest
