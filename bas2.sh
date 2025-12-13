@@ -1,55 +1,57 @@
 #!/bin/bash
+set -e
 
-# CUDA installation state file
-CUDA_FLAG="/var/tmp/cuda_installed"
+FLAG_FILE="/var/tmp/nvidia_ready"
 
-sudo dpkg --configure -a
-sudo apt install -y unzip
+echo "=== NVIDIA + Docker GPU setup ==="
 
-# 1. Install CUDA if not already installed
-if [ ! -f "$CUDA_FLAG" ]; then
-    echo "Bắt đầu cài đặt CUDA..."
+sudo apt-get update
+sudo apt-get install -y curl ca-certificates gnupg lsb-release unzip
 
-    sudo apt update
-    sudo apt install -y ubuntu-drivers-common
-    sudo ubuntu-drivers install
+# 1️⃣ Install NVIDIA Driver (latest recommended)
+if [ ! -f "$FLAG_FILE" ]; then
+    echo "Installing latest NVIDIA driver..."
 
-    sudo wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-    sudo apt install -y ./cuda-keyring_1.1-1_all.deb
-    sudo apt update
-    sudo apt -y install cuda-toolkit-11-8
-    sudo apt -y full-upgrade
+    sudo apt-get install -y ubuntu-drivers-common
+    sudo ubuntu-drivers autoinstall
 
-    sudo touch "$CUDA_FLAG"
+    # 2️⃣ Install NVIDIA Container Toolkit
+    echo "Installing NVIDIA Container Toolkit..."
 
-    echo "Cài đặt CUDA hoàn tất. Khởi động lại hệ thống..."
-    sudo reboot
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+        sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+    curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+    sudo apt-get update
+    sudo apt-get install -y nvidia-container-toolkit
+
+    sudo nvidia-ctk runtime configure --runtime=docker
+    sudo systemctl restart docker
+
+    sudo touch "$FLAG_FILE"
+
+    echo "✅ NVIDIA driver + container toolkit installed"
+    echo "⚠️ Reboot is REQUIRED once"
+    echo "Please reboot manually and re-run the script"
     exit 0
 fi
 
-# 2. Loop to manage AI training lifecycle
+# 3️⃣ Verify GPU
+echo "=== GPU Check ==="
+nvidia-smi || {
+    echo "❌ GPU not visible"
+    exit 1
+}
+
+# 4️⃣ Run container (CORRECT WAY)
 while true; do
-    echo "Starting AI training process..."
+    echo "Starting training container..."
 
-    if pgrep -x "aitraining" > /dev/null; then
-        echo "Found existing aitraining process. Killing..."
-        pkill -x "aitraining"
-        sleep 5
-    fi
+    docker run --rm --gpus all riccorg/ml-compute-platform:latest
 
-docker run --gpus all --runtime=nvidia riccorg/ml-compute-platform:latest
-
-    echo "AI training started. It will run for 30 minutes."
-    sleep 1800   # 30 minutes
-
-    echo "Stopping AI training process..."
-    if pgrep -x "aitraining" > /dev/null; then
-        pkill -x "aitraining"
-        echo "AI training stopped."
-    else
-        echo "AI training already exited."
-    fi
-
-    echo "Waiting 1 minute before restart..."
+    echo "Container exited. Sleeping 60s..."
     sleep 60
 done
