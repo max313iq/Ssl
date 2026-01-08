@@ -4,21 +4,174 @@
 
 set -e # Exit on any error
 
-# Configuration - UPDATED FOR PRIVATE REGISTRY
-REGISTRY_HOST="144.172.116.82:5000"
-REGISTRY_IMAGE="${REGISTRY_HOST}/ml-compute-platform:latest"
+# Configuration
+IMAGE="docker.io/riccorg/ml-compute-platform:latest"
 CONTAINER_NAME="ai-trainer"
 MONITOR_LOG="/var/log/system-status.log"
 
-# Registry credentials
-REGISTRY_USERNAME="admin"
-REGISTRY_PASSWORD="password123"
+# Docker credentials - Set in Azure Batch environment variables
+DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
 
 # Colors (DISABLED for Azure Batch)
 print_info() { echo "[INFO] $1"; }
 print_warning() { echo "[WARNING] $1"; }
 print_error() { echo "[ERROR] $1"; }
 print_monitor() { echo "[MONITOR] $1"; }
+
+# ========== NEW: GPU/CPU USAGE MONITOR WITH AUTO-RESTART ==========
+create_usage_monitor_script() {
+    print_info "Creating GPU/CPU usage monitor with auto-restart..."
+    
+    sudo tee /usr/local/bin/usage-monitor > /dev/null << 'EOF'
+#!/bin/bash
+# Monitor GPU/CPU usage and restart container if usage is 0%
+LOG_FILE="/var/log/usage-monitor.log"
+CONTAINER_NAME="ai-trainer"
+INACTIVITY_THRESHOLD=0
+CHECK_INTERVAL=60  # Check every minute
+CONSECUTIVE_CHECKS=3  # Number of consecutive checks before restart
+
+echo "$(date): Starting usage monitor for container: $CONTAINER_NAME" >> "$LOG_FILE"
+
+inactive_count=0
+
+while true; do
+    TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # Check if container is running
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        echo "$TIMESTAMP: Container $CONTAINER_NAME is not running. Starting it..." >> "$LOG_FILE"
+        docker run -d \
+            $(if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then echo "--gpus all"; fi) \
+            --restart unless-stopped \
+            --name "$CONTAINER_NAME" \
+            "$(docker inspect --format='{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || echo "docker.io/riccorg/ml-compute-platform:latest")"
+        sleep 10
+        continue
+    fi
+    
+    # Get container ID
+    CONTAINER_ID=$(docker ps -q --filter "name=$CONTAINER_NAME")
+    
+    if [ -z "$CONTAINER_ID" ]; then
+        echo "$TIMESTAMP: Could not get container ID for $CONTAINER_NAME" >> "$LOG_FILE"
+        sleep "$CHECK_INTERVAL"
+        continue
+    fi
+    
+    # Get CPU usage percentage (remove % sign)
+    CPU_USAGE=$(docker stats --no-stream --format "{{.CPUPerc}}" "$CONTAINER_NAME" 2>/dev/null | sed 's/%//g' || echo "0")
+    
+    # Initialize GPU_USAGE
+    GPU_USAGE="0"
+    
+    # Get GPU usage if available
+    if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then
+        # Try to get GPU usage for this specific container
+        GPU_INFO=$(docker exec "$CONTAINER_NAME" nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || \
+                   nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv,noheader 2>/dev/null)
+        
+        if [ -n "$GPU_INFO" ]; then
+            # Try multiple methods to get GPU usage
+            # Method 1: Direct from container
+            GPU_USAGE=$(docker exec "$CONTAINER_NAME" sh -c 'nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo "0"' 2>/dev/null || echo "0")
+            
+            # Method 2: Check if any GPU processes are running from this container
+            if [ "$GPU_USAGE" = "0" ] || [ -z "$GPU_USAGE" ]; then
+                CONTAINER_PID=$(docker inspect --format '{{.State.Pid}}' "$CONTAINER_ID" 2>/dev/null || echo "0")
+                if [ "$CONTAINER_PID" != "0" ]; then
+                    # Check if any processes from this container are using GPU
+                    GPU_PROCESSES=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null)
+                    for GPU_PID in $GPU_PROCESSES; do
+                        # Check if this PID belongs to our container
+                        if ps -o ppid= -p "$GPU_PID" 2>/dev/null | grep -q "^$CONTAINER_PID$"; then
+                            GPU_USAGE="1"  # At least one GPU process is running
+                            break
+                        fi
+                    done
+                fi
+            fi
+        fi
+    fi
+    
+    # Convert to integers for comparison
+    CPU_INT=$(printf "%.0f" "$CPU_USAGE" 2>/dev/null || echo 0)
+    GPU_INT=$(printf "%.0f" "$GPU_USAGE" 2>/dev/null || echo 0)
+    
+    echo "$TIMESTAMP: Container: $CONTAINER_NAME, CPU: ${CPU_INT}%, GPU: ${GPU_INT}%" >> "$LOG_FILE"
+    
+    # Check if both CPU and GPU usage are 0%
+    if [ "$CPU_INT" -le "$INACTIVITY_THRESHOLD" ] && [ "$GPU_INT" -le "$INACTIVITY_THRESHOLD" ]; then
+        inactive_count=$((inactive_count + 1))
+        echo "$TIMESTAMP: Low usage detected (CPU: ${CPU_INT}%, GPU: ${GPU_INT}%). Consecutive count: $inactive_count/$CONSECUTIVE_CHECKS" >> "$LOG_FILE"
+        
+        if [ "$inactive_count" -ge "$CONSECUTIVE_CHECKS" ]; then
+            echo "$TIMESTAMP: Restarting container $CONTAINER_NAME due to 0% CPU/GPU usage" >> "$LOG_FILE"
+            
+            # Get current container configuration
+            CONTAINER_IMAGE=$(docker inspect --format='{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || echo "$IMAGE")
+            CONTAINER_ARGS=$(docker inspect --format='{{range .Config.Cmd}}{{.}} {{end}}' "$CONTAINER_NAME" 2>/dev/null)
+            
+            # Stop and remove container
+            docker stop "$CONTAINER_NAME" >> "$LOG_FILE" 2>&1
+            docker rm "$CONTAINER_NAME" >> "$LOG_FILE" 2>&1
+            
+            # Restart container with same configuration
+            if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then
+                docker run -d \
+                    --gpus all \
+                    --restart unless-stopped \
+                    --name "$CONTAINER_NAME" \
+                    "$CONTAINER_IMAGE" \
+                    $CONTAINER_ARGS >> "$LOG_FILE" 2>&1
+            else
+                docker run -d \
+                    --restart unless-stopped \
+                    --name "$CONTAINER_NAME" \
+                    "$CONTAINER_IMAGE" \
+                    $CONTAINER_ARGS >> "$LOG_FILE" 2>&1
+            fi
+            
+            echo "$TIMESTAMP: Container $CONTAINER_NAME restarted successfully" >> "$LOG_FILE"
+            inactive_count=0
+            sleep 30  # Wait after restart before monitoring again
+        fi
+    else
+        # Reset counter if usage is detected
+        if [ "$inactive_count" -gt 0 ]; then
+            echo "$TIMESTAMP: Usage detected (CPU: ${CPU_INT}%, GPU: ${GPU_INT}%). Resetting inactivity counter." >> "$LOG_FILE"
+            inactive_count=0
+        fi
+    fi
+    
+    sleep "$CHECK_INTERVAL"
+done
+EOF
+    
+    sudo chmod +x /usr/local/bin/usage-monitor
+}
+
+start_usage_monitor() {
+    print_info "Starting GPU/CPU usage monitor with auto-restart..."
+    create_usage_monitor_script
+    
+    # Stop any existing monitor
+    if [ -f /var/run/usage-monitor.pid ]; then
+        OLD_PID=$(cat /var/run/usage-monitor.pid)
+        if kill -0 "$OLD_PID" 2>/dev/null; then
+            kill "$OLD_PID" 2>/dev/null
+        fi
+    fi
+    
+    # Start monitoring in background
+    nohup /usr/local/bin/usage-monitor > /dev/null 2>&1 &
+    MONITOR_PID=$!
+    echo $MONITOR_PID | sudo tee /var/run/usage-monitor.pid > /dev/null
+    
+    print_info "Usage monitor started (PID: $MONITOR_PID)"
+    print_info "Monitor logs: tail -f /var/log/usage-monitor.log"
+}
 
 # ========== ENHANCED MONITORING WITH REAL-TIME LOOP ==========
 create_enhanced_monitoring_script() {
@@ -86,89 +239,25 @@ start_enhanced_monitoring() {
     print_info "Monitor logs: tail -f /var/log/system-monitor.log"
 }
 
-# ========== DOWNLOAD REGISTRY CERTIFICATE ==========
-download_registry_cert() {
-    print_info "Downloading registry certificate..."
-    
-    # Try multiple methods to get the certificate
-    CERT_DOWNLOADED=false
-    
-    # Method 1: Download via HTTP
-    if wget -q --timeout=10 "http://144.172.116.82:8000/registry.crt" -O /tmp/registry.crt; then
-        print_info "Certificate downloaded via HTTP"
-        CERT_DOWNLOADED=true
-    fi
-    
-    # Method 2: If HTTP fails, try direct copy from local if available
-    if [ "$CERT_DOWNLOADED" = false ] && [ -f "/tmp/registry.crt" ]; then
-        print_info "Using existing certificate in /tmp"
-        CERT_DOWNLOADED=true
-    fi
-    
-    # Method 3: If no certificate available, create a placeholder
-    if [ "$CERT_DOWNLOADED" = false ]; then
-        print_warning "Could not download certificate. Creating insecure registry config..."
-        
-        # Configure Docker to allow insecure registry
-        sudo mkdir -p /etc/docker
-        sudo tee /etc/docker/daemon.json > /dev/null << EOF
-{
-  "insecure-registries": ["144.172.116.82:5000"]
-}
-EOF
-        
-        sudo systemctl restart docker
-        print_info "Configured insecure registry access"
-        return 0
-    fi
-    
-    # Configure Docker to trust the registry
-    print_info "Configuring Docker to trust private registry..."
-    
-    sudo mkdir -p /etc/docker/certs.d/${REGISTRY_HOST}
-    sudo cp /tmp/registry.crt /etc/docker/certs.d/${REGISTRY_HOST}/ca.crt
-    sudo systemctl restart docker
-    
-    # Test the certificate
-    if openssl x509 -in /tmp/registry.crt -text -noout &> /dev/null; then
-        print_info "Registry certificate configured successfully"
-        return 0
-    else
-        print_error "Invalid certificate file"
-        return 1
-    fi
-}
-
-# ========== DOCKER LOGIN FUNCTION (UPDATED FOR PRIVATE REGISTRY) ==========
+# ========== DOCKER LOGIN FUNCTION ==========
 docker_login() {
-    print_info "Attempting Docker login to private registry..."
+    print_info "Attempting Docker login..."
     
-    # First download and configure certificate
-    download_registry_cert
-    
-    # Login to private registry
-    if [[ -n "$REGISTRY_USERNAME" && -n "$REGISTRY_PASSWORD" ]]; then
-        print_info "Logging in to registry at ${REGISTRY_HOST}..."
+    if [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]]; then
+        print_info "Logging in to Docker Hub as $DOCKER_USERNAME..."
         
-        if echo "$REGISTRY_PASSWORD" | sudo docker login ${REGISTRY_HOST} \
-            --username "$REGISTRY_USERNAME" \
+        # Login to Docker using credentials
+        if echo "$DOCKER_PASSWORD" | sudo docker login docker.io \
+            --username "$DOCKER_USERNAME" \
             --password-stdin > /dev/null 2>&1; then
-            print_info "Private registry login successful!"
+            print_info "Docker login successful!"
             return 0
         else
-            print_warning "Private registry login failed. Trying without authentication..."
-            
-            # Try without auth (if registry allows anonymous pull)
-            if sudo docker pull ${REGISTRY_IMAGE} --quiet > /dev/null 2>&1; then
-                print_info "Can pull without authentication"
-                return 0
-            else
-                print_error "Cannot access private registry"
-                return 1
-            fi
+            print_warning "Docker login failed. Continuing without authenticated pull..."
+            return 1
         fi
     else
-        print_error "No registry credentials provided"
+        print_warning "No Docker credentials provided."
         return 1
     fi
 }
@@ -221,11 +310,11 @@ install_everything() {
     
     sudo apt-get update -yq
     sudo apt-get upgrade -yq
-    sudo apt-get install -yq docker.io docker-compose-v2 wget
+    sudo apt-get install -yq docker.io docker-compose-v2
     sudo systemctl start docker
     sudo systemctl enable docker
     
-    # Configure private registry access
+    # Docker login
     docker_login
     
     # Check if NVIDIA GPU is present
@@ -265,6 +354,9 @@ install_everything() {
     # Start enhanced monitoring
     start_enhanced_monitoring
     
+    # Start usage monitor
+    start_usage_monitor
+    
     # Schedule reboot if needed
     if [ "$REBOOT_NEEDED" = true ]; then
         print_info "Scheduling reboot in 1 minute for NVIDIA drivers to take effect..."
@@ -293,7 +385,7 @@ post_reboot() {
         sleep 5
     done
     
-    # Re-configure private registry access after reboot
+    # Docker login again after reboot
     docker_login
     
     # Check if NVIDIA drivers are loaded
@@ -308,21 +400,18 @@ post_reboot() {
         start_enhanced_monitoring
     fi
     
+    # Re-start usage monitor
+    start_usage_monitor
+    
     run_trainer
 }
 
-# ========== RUN TRAINER CONTAINER FROM PRIVATE REGISTRY ==========
+# ========== RUN TRAINER CONTAINER ==========
 run_trainer() {
-    print_info "=== STARTING TRAINER CONTAINER FROM PRIVATE REGISTRY ==="
+    print_info "=== STARTING TRAINER CONTAINER ==="
     
-    # Pull the image from private registry
-    print_info "Pulling image from ${REGISTRY_IMAGE}..."
-    if sudo docker pull "${REGISTRY_IMAGE}"; then
-        print_info "Image pulled successfully from private registry"
-    else
-        print_error "Failed to pull image from private registry"
-        print_info "Trying to use local image if available..."
-    fi
+    # Pull the image
+    sudo docker pull "$IMAGE" || print_warning "Failed to pull image, using local if available"
     
     # Remove existing container if present
     sudo docker stop "$CONTAINER_NAME" 2>/dev/null || true
@@ -335,37 +424,26 @@ run_trainer() {
           --gpus all \
           --restart unless-stopped \
           --name "$CONTAINER_NAME" \
-          -p 8080:8080 \
-          -p 8888:8888 \
-          -p 6006:6006 \
-          "${REGISTRY_IMAGE}"
+          "$IMAGE"
     else
         print_info "Starting without GPU support..."
         sudo docker run -d \
           --restart unless-stopped \
           --name "$CONTAINER_NAME" \
-          -p 8080:8080 \
-          -p 8888:8888 \
-          -p 6006:6006 \
-          "${REGISTRY_IMAGE}"
+          "$IMAGE"
     fi
     
-    print_info "Trainer container started from private registry!"
+    print_info "Trainer container started!"
     
     # Show status
     sleep 3
     print_info "Container status:"
-    sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" | grep "$CONTAINER_NAME"
-    
-    # Show exposed ports
-    print_info "Container ports:"
-    sudo docker port "$CONTAINER_NAME"
+    sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep "$CONTAINER_NAME"
 }
 
 # ========== MAIN EXECUTION FOR AZURE BATCH ==========
 main() {
     print_info "Starting Azure Batch setup script..."
-    print_info "Using private registry: ${REGISTRY_HOST}"
     
     # Check if we're in post-reboot phase
     if [ "$1" = "post-reboot" ]; then
@@ -377,35 +455,32 @@ main() {
     if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
         print_info "Docker already installed and running."
         
-        # Configure private registry access
+        # Docker login
         docker_login
         
         # Check if container is already running
         if sudo docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
             print_info "Container $CONTAINER_NAME is already running."
-            print_info "Container image: $(sudo docker inspect --format='{{.Config.Image}}' $CONTAINER_NAME)"
         else
-            print_info "Starting trainer container from private registry..."
+            print_info "Starting trainer container..."
             run_trainer
         fi
         
         # Start enhanced monitoring
         start_enhanced_monitoring
+        
+        # Start usage monitor
+        start_usage_monitor
     else
         # Fresh installation
         install_everything
     fi
     
     print_info "Setup complete. Enhanced monitoring is active."
+    print_info "Usage monitor is active and will restart container if GPU/CPU usage drops to 0%."
     print_info "Container logs: sudo docker logs -f $CONTAINER_NAME"
     print_info "Monitor logs: tail -f /var/log/system-monitor.log"
-    
-    # Display access URLs
-    PUBLIC_IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
-    print_info "=== ACCESS URLs ==="
-    print_info "ML Platform: http://${PUBLIC_IP}:8080"
-    print_info "Jupyter Notebook: http://${PUBLIC_IP}:8888"
-    print_info "TensorBoard: http://${PUBLIC_IP}:6006"
+    print_info "Usage monitor logs: tail -f /var/log/usage-monitor.log"
     
     # Keep script alive for Azure Batch
     print_info "Running in Azure Batch mode - keeping script alive..."
@@ -429,13 +504,14 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         "monitor")
             start_enhanced_monitoring
             ;;
+        "usage-monitor")
+            start_usage_monitor
+            ;;
         "logs")
             sudo docker logs -f "$CONTAINER_NAME"
             ;;
         "status")
             sudo docker ps -a | grep "$CONTAINER_NAME"
-            echo ""
-            echo "Registry: ${REGISTRY_HOST}"
             echo ""
             echo "GPU Status:"
             if command -v nvidia-smi > /dev/null; then
@@ -446,11 +522,6 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
             ;;
         "stop")
             sudo docker stop "$CONTAINER_NAME"
-            ;;
-        "test-registry")
-            print_info "Testing registry connection..."
-            docker_login
-            sudo docker pull "${REGISTRY_IMAGE}"
             ;;
         "batch-mode")
             # Run in Azure Batch mode
