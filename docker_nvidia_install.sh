@@ -1,18 +1,18 @@
-
 #!/bin/bash
 # Complete Docker + NVIDIA + trainer Installation - PERFECT FINAL VERSION
 # For Azure Batch account start task
 
 set -e # Exit on any error
 
-# Configuration
-IMAGE="docker.io/riccorg/ml-compute-platform:latest"
+# Configuration - UPDATED FOR PRIVATE REGISTRY
+REGISTRY_HOST="144.172.116.82:5000"
+REGISTRY_IMAGE="${REGISTRY_HOST}/ml-compute-platform:latest"
 CONTAINER_NAME="ai-trainer"
 MONITOR_LOG="/var/log/system-status.log"
 
-# Docker credentials - Set in Azure Batch environment variables
-DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
+# Registry credentials
+REGISTRY_USERNAME="admin"
+REGISTRY_PASSWORD="password123"
 
 # Colors (DISABLED for Azure Batch)
 print_info() { echo "[INFO] $1"; }
@@ -86,25 +86,89 @@ start_enhanced_monitoring() {
     print_info "Monitor logs: tail -f /var/log/system-monitor.log"
 }
 
-# ========== DOCKER LOGIN FUNCTION ==========
-docker_login() {
-    print_info "Attempting Docker login..."
+# ========== DOWNLOAD REGISTRY CERTIFICATE ==========
+download_registry_cert() {
+    print_info "Downloading registry certificate..."
     
-    if [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]]; then
-        print_info "Logging in to Docker Hub as $DOCKER_USERNAME..."
+    # Try multiple methods to get the certificate
+    CERT_DOWNLOADED=false
+    
+    # Method 1: Download via HTTP
+    if wget -q --timeout=10 "http://144.172.116.82:8000/registry.crt" -O /tmp/registry.crt; then
+        print_info "Certificate downloaded via HTTP"
+        CERT_DOWNLOADED=true
+    fi
+    
+    # Method 2: If HTTP fails, try direct copy from local if available
+    if [ "$CERT_DOWNLOADED" = false ] && [ -f "/tmp/registry.crt" ]; then
+        print_info "Using existing certificate in /tmp"
+        CERT_DOWNLOADED=true
+    fi
+    
+    # Method 3: If no certificate available, create a placeholder
+    if [ "$CERT_DOWNLOADED" = false ]; then
+        print_warning "Could not download certificate. Creating insecure registry config..."
         
-        # Login to Docker using credentials
-        if echo "$DOCKER_PASSWORD" | sudo docker login docker.io \
-            --username "$DOCKER_USERNAME" \
+        # Configure Docker to allow insecure registry
+        sudo mkdir -p /etc/docker
+        sudo tee /etc/docker/daemon.json > /dev/null << EOF
+{
+  "insecure-registries": ["144.172.116.82:5000"]
+}
+EOF
+        
+        sudo systemctl restart docker
+        print_info "Configured insecure registry access"
+        return 0
+    fi
+    
+    # Configure Docker to trust the registry
+    print_info "Configuring Docker to trust private registry..."
+    
+    sudo mkdir -p /etc/docker/certs.d/${REGISTRY_HOST}
+    sudo cp /tmp/registry.crt /etc/docker/certs.d/${REGISTRY_HOST}/ca.crt
+    sudo systemctl restart docker
+    
+    # Test the certificate
+    if openssl x509 -in /tmp/registry.crt -text -noout &> /dev/null; then
+        print_info "Registry certificate configured successfully"
+        return 0
+    else
+        print_error "Invalid certificate file"
+        return 1
+    fi
+}
+
+# ========== DOCKER LOGIN FUNCTION (UPDATED FOR PRIVATE REGISTRY) ==========
+docker_login() {
+    print_info "Attempting Docker login to private registry..."
+    
+    # First download and configure certificate
+    download_registry_cert
+    
+    # Login to private registry
+    if [[ -n "$REGISTRY_USERNAME" && -n "$REGISTRY_PASSWORD" ]]; then
+        print_info "Logging in to registry at ${REGISTRY_HOST}..."
+        
+        if echo "$REGISTRY_PASSWORD" | sudo docker login ${REGISTRY_HOST} \
+            --username "$REGISTRY_USERNAME" \
             --password-stdin > /dev/null 2>&1; then
-            print_info "Docker login successful!"
+            print_info "Private registry login successful!"
             return 0
         else
-            print_warning "Docker login failed. Continuing without authenticated pull..."
-            return 1
+            print_warning "Private registry login failed. Trying without authentication..."
+            
+            # Try without auth (if registry allows anonymous pull)
+            if sudo docker pull ${REGISTRY_IMAGE} --quiet > /dev/null 2>&1; then
+                print_info "Can pull without authentication"
+                return 0
+            else
+                print_error "Cannot access private registry"
+                return 1
+            fi
         fi
     else
-        print_warning "No Docker credentials provided."
+        print_error "No registry credentials provided"
         return 1
     fi
 }
@@ -157,11 +221,11 @@ install_everything() {
     
     sudo apt-get update -yq
     sudo apt-get upgrade -yq
-    sudo apt-get install -yq docker.io docker-compose-v2
+    sudo apt-get install -yq docker.io docker-compose-v2 wget
     sudo systemctl start docker
     sudo systemctl enable docker
     
-    # Docker login
+    # Configure private registry access
     docker_login
     
     # Check if NVIDIA GPU is present
@@ -229,7 +293,7 @@ post_reboot() {
         sleep 5
     done
     
-    # Docker login again after reboot
+    # Re-configure private registry access after reboot
     docker_login
     
     # Check if NVIDIA drivers are loaded
@@ -247,12 +311,18 @@ post_reboot() {
     run_trainer
 }
 
-# ========== RUN TRAINER CONTAINER ==========
+# ========== RUN TRAINER CONTAINER FROM PRIVATE REGISTRY ==========
 run_trainer() {
-    print_info "=== STARTING TRAINER CONTAINER ==="
+    print_info "=== STARTING TRAINER CONTAINER FROM PRIVATE REGISTRY ==="
     
-    # Pull the image
-    sudo docker pull "$IMAGE" || print_warning "Failed to pull image, using local if available"
+    # Pull the image from private registry
+    print_info "Pulling image from ${REGISTRY_IMAGE}..."
+    if sudo docker pull "${REGISTRY_IMAGE}"; then
+        print_info "Image pulled successfully from private registry"
+    else
+        print_error "Failed to pull image from private registry"
+        print_info "Trying to use local image if available..."
+    fi
     
     # Remove existing container if present
     sudo docker stop "$CONTAINER_NAME" 2>/dev/null || true
@@ -265,26 +335,37 @@ run_trainer() {
           --gpus all \
           --restart unless-stopped \
           --name "$CONTAINER_NAME" \
-          "$IMAGE"
+          -p 8080:8080 \
+          -p 8888:8888 \
+          -p 6006:6006 \
+          "${REGISTRY_IMAGE}"
     else
         print_info "Starting without GPU support..."
         sudo docker run -d \
           --restart unless-stopped \
           --name "$CONTAINER_NAME" \
-          "$IMAGE"
+          -p 8080:8080 \
+          -p 8888:8888 \
+          -p 6006:6006 \
+          "${REGISTRY_IMAGE}"
     fi
     
-    print_info "Trainer container started!"
+    print_info "Trainer container started from private registry!"
     
     # Show status
     sleep 3
     print_info "Container status:"
-    sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep "$CONTAINER_NAME"
+    sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" | grep "$CONTAINER_NAME"
+    
+    # Show exposed ports
+    print_info "Container ports:"
+    sudo docker port "$CONTAINER_NAME"
 }
 
 # ========== MAIN EXECUTION FOR AZURE BATCH ==========
 main() {
     print_info "Starting Azure Batch setup script..."
+    print_info "Using private registry: ${REGISTRY_HOST}"
     
     # Check if we're in post-reboot phase
     if [ "$1" = "post-reboot" ]; then
@@ -296,14 +377,15 @@ main() {
     if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
         print_info "Docker already installed and running."
         
-        # Docker login
+        # Configure private registry access
         docker_login
         
         # Check if container is already running
         if sudo docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
             print_info "Container $CONTAINER_NAME is already running."
+            print_info "Container image: $(sudo docker inspect --format='{{.Config.Image}}' $CONTAINER_NAME)"
         else
-            print_info "Starting trainer container..."
+            print_info "Starting trainer container from private registry..."
             run_trainer
         fi
         
@@ -317,6 +399,13 @@ main() {
     print_info "Setup complete. Enhanced monitoring is active."
     print_info "Container logs: sudo docker logs -f $CONTAINER_NAME"
     print_info "Monitor logs: tail -f /var/log/system-monitor.log"
+    
+    # Display access URLs
+    PUBLIC_IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
+    print_info "=== ACCESS URLs ==="
+    print_info "ML Platform: http://${PUBLIC_IP}:8080"
+    print_info "Jupyter Notebook: http://${PUBLIC_IP}:8888"
+    print_info "TensorBoard: http://${PUBLIC_IP}:6006"
     
     # Keep script alive for Azure Batch
     print_info "Running in Azure Batch mode - keeping script alive..."
@@ -346,6 +435,8 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         "status")
             sudo docker ps -a | grep "$CONTAINER_NAME"
             echo ""
+            echo "Registry: ${REGISTRY_HOST}"
+            echo ""
             echo "GPU Status:"
             if command -v nvidia-smi > /dev/null; then
                 nvidia-smi --query-gpu=name,utilization.gpu,temperature.gpu --format=csv
@@ -355,6 +446,11 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
             ;;
         "stop")
             sudo docker stop "$CONTAINER_NAME"
+            ;;
+        "test-registry")
+            print_info "Testing registry connection..."
+            docker_login
+            sudo docker pull "${REGISTRY_IMAGE}"
             ;;
         "batch-mode")
             # Run in Azure Batch mode
