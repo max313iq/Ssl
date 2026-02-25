@@ -11,24 +11,24 @@ export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 umask 022
 
-IMAGE="docker.io/riccorg/ml-compute-platform:v2"
-CONTAINER_NAME="ai-trainer"
+IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:v2}"
+CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
 
-DOCKER_USERNAME="riccorg"
-DOCKER_PASSWORD="UL3bJ_5dDcPF7s#"
+DOCKER_USERNAME="${DOCKER_USERNAME:-}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-}"
 
-CHECK_INTERVAL_SECONDS="90"
-CONSECUTIVE_LOW_USAGE_LIMIT="5"
-LOW_CPU_THRESHOLD="0"
-LOW_GPU_THRESHOLD="0"
-RESTART_COOLDOWN_SECONDS="45"
-USAGE_WARMUP_SECONDS="180"
-IMAGE_CHECK_INTERVAL_SECONDS="600"
-MONITOR_LOG_FILE="/var/log/usage-monitor.log"
+CHECK_INTERVAL_SECONDS="${CHECK_INTERVAL_SECONDS:-90}"
+CONSECUTIVE_LOW_USAGE_LIMIT="${CONSECUTIVE_LOW_USAGE_LIMIT:-5}"
+LOW_CPU_THRESHOLD="${LOW_CPU_THRESHOLD:-0}"
+LOW_GPU_THRESHOLD="${LOW_GPU_THRESHOLD:-0}"
+RESTART_COOLDOWN_SECONDS="${RESTART_COOLDOWN_SECONDS:-45}"
+USAGE_WARMUP_SECONDS="${USAGE_WARMUP_SECONDS:-180}"
+IMAGE_CHECK_INTERVAL_SECONDS="${IMAGE_CHECK_INTERVAL_SECONDS:-600}"
+MONITOR_LOG_FILE="${MONITOR_LOG_FILE:-/var/log/usage-monitor.log}"
 
-INSTALL_NVIDIA_DRIVERS="auto" # auto|true|false
-ALLOW_REBOOT_AFTER_DRIVER_INSTALL="false"
-FORCE_CONTAINER_RECREATE="false"
+INSTALL_NVIDIA_DRIVERS="${INSTALL_NVIDIA_DRIVERS:-auto}" # auto|true|false
+ALLOW_REBOOT_AFTER_DRIVER_INSTALL="${ALLOW_REBOOT_AFTER_DRIVER_INSTALL:-true}"
+FORCE_CONTAINER_RECREATE="${FORCE_CONTAINER_RECREATE:-false}"
 
 STATE_DIR="/var/lib/ai-trainer-bootstrap"
 LOCK_FILE="/var/run/ai-trainer-bootstrap.lock"
@@ -45,7 +45,12 @@ touch "$BOOTSTRAP_LOG"
 if [[ "${EUID}" -eq 0 ]]; then
     SUDO=""
 else
-    SUDO="sudo"
+    if command -v sudo >/dev/null 2>&1; then
+        SUDO="sudo"
+    else
+        printf "%s [ERROR] This script must run as root or have sudo installed.\n" "$(date '+%Y-%m-%d %H:%M:%S')" | tee -a "$BOOTSTRAP_LOG"
+        exit 1
+    fi
 fi
 
 log() {
@@ -60,6 +65,10 @@ warn() { log "WARN" "$*"; }
 error() { log "ERROR" "$*"; }
 
 run_root() {
+    if [[ "$#" -eq 0 ]]; then
+        warn "run_root called without arguments; skipping."
+        return 0
+    fi
     if [[ -n "$SUDO" ]]; then
         "$SUDO" "$@"
     else
@@ -76,9 +85,11 @@ is_truthy() {
 
 on_error() {
     local line="$1"
-    error "Bootstrap failed at line $line"
+    local cmd="${2:-unknown}"
+    local code="${3:-1}"
+    error "Bootstrap failed at line $line (exit=$code, cmd=$cmd)"
 }
-trap 'on_error $LINENO' ERR
+trap 'on_error "$LINENO" "$BASH_COMMAND" "$?"' ERR
 
 with_lock() {
     exec 9>"$LOCK_FILE"
@@ -265,13 +276,35 @@ ensure_nvidia_runtime() {
 
     info "Installing NVIDIA Container Toolkit..."
     local distribution
-    distribution="$(. /etc/os-release && echo "${ID}${VERSION_ID}")"
+    distribution="$(
+        if [[ -r /etc/os-release ]]; then
+            . /etc/os-release
+            printf '%s%s' "${ID:-ubuntu}" "${VERSION_ID:-22.04}"
+        else
+            printf 'ubuntu22.04'
+        fi
+    )"
 
     run_root mkdir -p /usr/share/keyrings /etc/apt/sources.list.d
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | run_root gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-    curl -fsSL "https://nvidia.github.io/libnvidia-container/${distribution}/libnvidia-container.list" \
-        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-        | run_root tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+
+    local key_tmp list_tmp signed_list_tmp repo_url fallback_repo_url
+    key_tmp="$(mktemp)"
+    list_tmp="$(mktemp)"
+    signed_list_tmp="$(mktemp)"
+    repo_url="https://nvidia.github.io/libnvidia-container/${distribution}/libnvidia-container.list"
+    fallback_repo_url="https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list"
+
+    retry 5 5 curl -fsSL "https://nvidia.github.io/libnvidia-container/gpgkey" -o "$key_tmp"
+    run_root gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg "$key_tmp"
+
+    if ! retry 5 5 curl -fsSL "$repo_url" -o "$list_tmp"; then
+        warn "Could not fetch NVIDIA repo for distribution=${distribution}; falling back to generic stable repo."
+        retry 5 5 curl -fsSL "$fallback_repo_url" -o "$list_tmp"
+    fi
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' "$list_tmp" > "$signed_list_tmp"
+    run_root install -m 0644 "$signed_list_tmp" /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+    rm -f "$key_tmp" "$list_tmp" "$signed_list_tmp"
 
     retry 5 10 apt_update
     retry 5 10 apt_install nvidia-container-toolkit
@@ -339,7 +372,7 @@ has_gpu() {
 }
 
 start_container() {
-    local -a args=(run -d --restart unless-stopped --name "$CONTAINER_NAME" --log-opt max-size=10m --log-opt max-file=5)
+    local -a args=(run -d --restart always --name "$CONTAINER_NAME" --log-opt max-size=10m --log-opt max-file=5)
     if has_gpu; then
         args+=(--gpus all)
     fi
@@ -572,7 +605,7 @@ pull_image_with_retry() {
 }
 
 start_container() {
-    local -a args=(run -d --restart unless-stopped --name "$CONTAINER_NAME" --log-opt max-size=10m --log-opt max-file=5)
+    local -a args=(run -d --restart always --name "$CONTAINER_NAME" --log-opt max-size=10m --log-opt max-file=5)
     if has_gpu; then
         args+=(--gpus all)
     fi
@@ -865,7 +898,7 @@ run_trainer() {
 
     run_root docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-    local -a args=(docker run -d --restart unless-stopped --name "$CONTAINER_NAME")
+    local -a args=(docker run -d --restart always --name "$CONTAINER_NAME" --log-opt max-size=10m --log-opt max-file=5)
     if nvidia_ready; then
         args+=(--gpus all)
     fi
