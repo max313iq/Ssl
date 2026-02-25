@@ -27,7 +27,7 @@ IMAGE_CHECK_INTERVAL_SECONDS="600"
 MONITOR_LOG_FILE="/var/log/usage-monitor.log"
 
 INSTALL_NVIDIA_DRIVERS="auto" # auto|true|false
-ALLOW_REBOOT_AFTER_DRIVER_INSTALL="true"
+ALLOW_REBOOT_AFTER_DRIVER_INSTALL="false"
 FORCE_CONTAINER_RECREATE="false"
 
 STATE_DIR="/var/lib/ai-trainer-bootstrap"
@@ -37,7 +37,6 @@ MONITOR_SCRIPT_PATH="/usr/local/bin/usage-monitor"
 MONITOR_SERVICE_PATH="/etc/systemd/system/usage-monitor.service"
 APT_ACQUIRE_RETRIES="5"
 APT_DPKG_USE_PTY="0"
-DOCKER_PULL_TIMEOUT_SECONDS="900"
 
 mkdir -p "$STATE_DIR"
 mkdir -p /var/log
@@ -306,7 +305,6 @@ RESTART_COOLDOWN_SECONDS="45"
 MONITOR_LOG_FILE="/var/log/usage-monitor.log"
 LOCK_FILE="/var/run/usage-monitor.lock"
 LOG_MAX_SIZE_BYTES=10485760
-DOCKER_STATS_TIMEOUT_SECONDS=15
 NVIDIA_QUERY_TIMEOUT_SECONDS=10
 
 mkdir -p "$(dirname "$MONITOR_LOG_FILE")"
@@ -373,7 +371,7 @@ ensure_container_running() {
 
 get_cpu_int() {
     local cpu
-    cpu="$(timeout "$DOCKER_STATS_TIMEOUT_SECONDS" docker stats --no-stream --format '{{.CPUPerc}}' "$CONTAINER_NAME" 2>/dev/null | tr -d '%' || true)"
+    cpu="$(docker stats --no-stream --format '{{.CPUPerc}}' "$CONTAINER_NAME" 2>/dev/null | tr -d '%' || true)"
     if [[ -z "$cpu" ]]; then
         echo 0
         return 0
@@ -479,8 +477,6 @@ LOCK_FILE="/var/run/usage-monitor.lock"
 LOG_MAX_SIZE_BYTES=10485760
 DOCKER_STATS_TIMEOUT_SECONDS=15
 NVIDIA_QUERY_TIMEOUT_SECONDS=10
-DOCKER_PULL_TIMEOUT_SECONDS=900
-DOCKER_INFO_TIMEOUT_SECONDS=10
 PULL_RETRIES=3
 PULL_RETRY_SLEEP_SECONDS=15
 UNHEALTHY_STREAK_LIMIT=3
@@ -523,7 +519,7 @@ run_with_timeout() {
 }
 
 docker_ready() {
-    run_with_timeout "$DOCKER_INFO_TIMEOUT_SECONDS" docker info >/dev/null 2>&1
+    docker info >/dev/null 2>&1
 }
 
 try_recover_docker_daemon() {
@@ -565,7 +561,7 @@ get_container_health_status() {
 pull_image_with_retry() {
     local attempt=1
     while [[ "$attempt" -le "$PULL_RETRIES" ]]; do
-        if run_with_timeout "$DOCKER_PULL_TIMEOUT_SECONDS" docker pull "$IMAGE" >/dev/null 2>&1; then
+        if docker pull "$IMAGE" >/dev/null 2>&1; then
             return 0
         fi
         log "Image pull attempt ${attempt}/${PULL_RETRIES} failed for $IMAGE"
@@ -617,7 +613,7 @@ ensure_container_running() {
 
 get_cpu_int() {
     local cpu
-    cpu="$(run_with_timeout "$DOCKER_STATS_TIMEOUT_SECONDS" docker stats --no-stream --format '{{.CPUPerc}}' "$CONTAINER_NAME" 2>/dev/null | tr -d '%' || true)"
+    cpu="$(docker stats --no-stream --format '{{.CPUPerc}}' "$CONTAINER_NAME" 2>/dev/null | tr -d '%' || true)"
     if [[ -z "$cpu" ]]; then
         echo 0
         return 0
@@ -832,7 +828,7 @@ enable_usage_monitor() {
 }
 
 pull_image_if_possible() {
-    if retry 3 15 run_with_timeout "$DOCKER_PULL_TIMEOUT_SECONDS" run_root docker pull "$IMAGE"; then
+    if retry 3 15 run_root docker pull "$IMAGE"; then
         info "Pulled image: $IMAGE"
         return 0
     fi
