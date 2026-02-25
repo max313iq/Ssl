@@ -10,7 +10,7 @@ set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 umask 022
-SCRIPT_VERSION="2026-02-25-gpufix-5"
+SCRIPT_VERSION="2026-02-25-gpufix-6"
 
 IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
@@ -255,6 +255,70 @@ should_enable_fabric_manager() {
 package_available() {
     apt-cache show "$1" >/dev/null 2>&1
 }
+package_installed() {
+    local pkg="$1"
+    dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed'
+}
+
+detect_nvidia_userland_flavor() {
+    local major="${1:-}"
+    if [[ -z "$major" ]]; then
+        echo "standard"
+        return 0
+    fi
+
+    if package_installed "nvidia-utils-${major}-server" \
+        || package_installed "nvidia-compute-utils-${major}-server" \
+        || package_installed "libnvidia-compute-${major}-server"; then
+        echo "server"
+        return 0
+    fi
+
+    if package_installed "nvidia-utils-${major}" \
+        || package_installed "nvidia-compute-utils-${major}" \
+        || package_installed "libnvidia-compute-${major}"; then
+        echo "standard"
+        return 0
+    fi
+
+    if dpkg -l 2>/dev/null | awk '/^ii[[:space:]]+nvidia-driver-[0-9]+-server([[:space:]]|$)/{found=1} END{exit(found?0:1)}'; then
+        echo "server"
+        return 0
+    fi
+
+    echo "standard"
+    return 0
+}
+
+install_nvidia_userland_for_major() {
+    local major="${1:-}"
+    local flavor="${2:-standard}"
+    local -a candidates=()
+    local pkg=""
+
+    [[ -n "$major" ]] || return 1
+
+    if [[ "$flavor" == "server" ]]; then
+        candidates=("nvidia-utils-${major}-server" "nvidia-compute-utils-${major}-server")
+    else
+        candidates=("nvidia-utils-${major}" "nvidia-compute-utils-${major}")
+    fi
+
+    for pkg in "${candidates[@]}"; do
+        if ! package_available "$pkg"; then
+            continue
+        fi
+        info "Trying flavor-aware nvidia-smi recovery package: $pkg"
+        if retry 2 10 apt_install "$pkg"; then
+            ensure_nvidia_smi_command_path || true
+            if [[ -n "$(nvidia_smi_bin || true)" ]]; then
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
 
 enable_restricted_repos_if_needed() {
     if ! command -v add-apt-repository >/dev/null 2>&1; then
@@ -394,7 +458,7 @@ ensure_nvidia_fabric_manager() {
 
     if dpkg -l 2>/dev/null | awk '/^ii[[:space:]]+nvidia-driver-[0-9]+-open([[:space:]]|$)/{found=1} END{exit(found?0:1)}'; then
         if [[ "$is_h100" -eq 1 ]]; then
-            warn "Open NVIDIA driver stack detected on H100; proceeding with server userland co-install for compatibility."
+            warn "Open NVIDIA driver stack detected on H100; proceeding with flavor-aware fabric manager installation."
         else
             warn "Open NVIDIA driver stack detected; skipping fabric manager to avoid package transitions that can remove nvidia-smi."
             return 0
@@ -415,18 +479,16 @@ ensure_nvidia_fabric_manager() {
         info "H100 detected; enabling fabric manager."
     fi
 
-    local major pkg selected=""
+    local major pkg selected="" pre_flavor="standard"
     major="$(nvidia_driver_major || true)"
     local -a candidates=()
-    local -a keep_userland=()
+    if [[ -n "$major" ]]; then
+        pre_flavor="$(detect_nvidia_userland_flavor "$major")"
+        info "Detected NVIDIA userland flavor before fabric manager install: $pre_flavor"
+    fi
 
     if [[ -n "$major" ]]; then
         candidates+=("nvidia-fabricmanager-${major}" "cuda-drivers-fabricmanager-${major}")
-        for pkg in "nvidia-utils-${major}-server" "nvidia-compute-utils-${major}-server" "nvidia-utils-${major}" "nvidia-compute-utils-${major}"; do
-            if package_available "$pkg"; then
-                keep_userland+=("$pkg")
-            fi
-        done
     fi
     candidates+=("nvidia-fabricmanager")
 
@@ -434,12 +496,7 @@ ensure_nvidia_fabric_manager() {
     for pkg in "${candidates[@]}"; do
         if package_available "$pkg"; then
             info "Installing NVIDIA Fabric Manager package: $pkg"
-            if [[ "${#keep_userland[@]}" -gt 0 ]]; then
-                if retry 3 10 apt_install "$pkg" "${keep_userland[@]}"; then
-                    selected="$pkg"
-                    break
-                fi
-            elif retry 3 10 apt_install "$pkg"; then
+            if retry 3 10 apt_install "$pkg"; then
                 selected="$pkg"
                 break
             fi
@@ -465,7 +522,20 @@ ensure_nvidia_fabric_manager() {
     fi
 
     if ! ensure_nvidia_smi_binary; then
-        warn "nvidia-smi became unavailable after fabric manager installation."
+        warn "nvidia-smi became unavailable after fabric manager installation; running flavor-aware recovery."
+        if [[ -n "$major" ]]; then
+            retry 3 10 apt_update || true
+            if ! install_nvidia_userland_for_major "$major" "$pre_flavor"; then
+                local fallback_flavor="server"
+                if [[ "$pre_flavor" == "server" ]]; then
+                    fallback_flavor="standard"
+                fi
+                install_nvidia_userland_for_major "$major" "$fallback_flavor" || true
+            fi
+        fi
+        if ! ensure_nvidia_smi_binary; then
+            warn "nvidia-smi is still unavailable after post-fabric-manager recovery."
+        fi
     fi
 }
 
