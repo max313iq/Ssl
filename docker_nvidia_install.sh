@@ -167,13 +167,36 @@ docker_is_running() {
 gpu_present() {
     lspci | grep -qi nvidia || [[ -e /dev/nvidiactl || -e /dev/nvidia0 ]]
 }
+nvidia_smi_bin() {
+    local smi=""
+    smi="$(command -v nvidia-smi 2>/dev/null || true)"
+    if [[ -n "$smi" ]]; then
+        echo "$smi"
+        return 0
+    fi
+
+    for smi in /usr/bin/nvidia-smi /bin/nvidia-smi /usr/local/nvidia/bin/nvidia-smi; do
+        if [[ -x "$smi" ]]; then
+            echo "$smi"
+            return 0
+        fi
+    done
+
+    return 1
+}
 
 nvidia_ready() {
-    command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1
+    local smi=""
+    smi="$(nvidia_smi_bin || true)"
+    [[ -n "$smi" ]] || return 1
+    "$smi" >/dev/null 2>&1
 }
 
 nvidia_driver_major() {
-    nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null \
+    local smi=""
+    smi="$(nvidia_smi_bin || true)"
+    [[ -n "$smi" ]] || return 1
+    "$smi" --query-gpu=driver_version --format=csv,noheader 2>/dev/null \
         | head -1 \
         | awk -F'.' '{print $1}' \
         | tr -dc '0-9'
@@ -184,7 +207,9 @@ package_available() {
 }
 
 ensure_nvidia_smi_binary() {
-    if command -v nvidia-smi >/dev/null 2>&1; then
+    local smi=""
+    smi="$(nvidia_smi_bin || true)"
+    if [[ -n "$smi" ]] && "$smi" >/dev/null 2>&1; then
         return 0
     fi
 
@@ -203,13 +228,13 @@ ensure_nvidia_smi_binary() {
         done
     fi
 
-    if ! command -v nvidia-smi >/dev/null 2>&1; then
+    if [[ -z "$(nvidia_smi_bin || true)" ]]; then
         for pkg in \
             nvidia-utils-590-server nvidia-utils-590 \
             nvidia-utils-580-server nvidia-utils-580 \
             nvidia-utils-570-server nvidia-utils-570 \
             nvidia-utils-550-server nvidia-utils-535-server nvidia-utils-535; do
-            if command -v nvidia-smi >/dev/null 2>&1; then
+            if [[ -n "$(nvidia_smi_bin || true)" ]]; then
                 break
             fi
             if package_available "$pkg"; then
@@ -217,9 +242,18 @@ ensure_nvidia_smi_binary() {
             fi
         done
     fi
+    smi="$(nvidia_smi_bin || true)"
+    if [[ -n "$smi" ]]; then
+        if [[ ! -x /usr/bin/nvidia-smi ]]; then
+            run_root ln -sf "$smi" /usr/bin/nvidia-smi || true
+        fi
+        if [[ -x /usr/bin/nvidia-smi ]]; then
+            smi="/usr/bin/nvidia-smi"
+        fi
+    fi
 
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        info "nvidia-smi installed successfully."
+    if [[ -n "$smi" ]] && "$smi" >/dev/null 2>&1; then
+        info "nvidia-smi installed successfully at $smi."
         return 0
     fi
 
@@ -237,8 +271,10 @@ ensure_nvidia_fabric_manager() {
         return 0
     fi
 
-    local gpu_count
-    gpu_count="$(nvidia-smi --query-gpu=count --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9')"
+    local smi gpu_count
+    smi="$(nvidia_smi_bin || true)"
+    [[ -n "$smi" ]] || return 0
+    gpu_count="$("$smi" --query-gpu=count --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9')"
     if [[ -z "$gpu_count" || "$gpu_count" -lt 2 ]]; then
         info "Single/no GPU detected; fabric manager not required."
         return 0
@@ -287,8 +323,10 @@ cuda_fabric_state_ok() {
         return 1
     fi
 
-    local states state
-    states="$(nvidia-smi -q 2>/dev/null | awk '/^[[:space:]]*Fabric$/ {fabric=1; next} fabric && /^[[:space:]]*State[[:space:]]*:/ {print $3; fabric=0}')"
+    local smi states state
+    smi="$(nvidia_smi_bin || true)"
+    [[ -n "$smi" ]] || return 1
+    states="$("$smi" -q 2>/dev/null | awk '/^[[:space:]]*Fabric$/ {fabric=1; next} fabric && /^[[:space:]]*State[[:space:]]*:/ {print $3; fabric=0}')"
     if [[ -z "$states" ]]; then
         return 0
     fi
@@ -333,10 +371,13 @@ ensure_base_packages() {
         lsb-release \
         apt-transport-https \
         software-properties-common \
+        ubuntu-drivers-common \
+        dkms \
         jq \
         util-linux \
         psmisc \
         pciutils
+    retry 2 5 apt_install "linux-headers-$(uname -r)" || warn "Could not install linux-headers-$(uname -r); continuing."
 }
 
 ensure_docker() {
@@ -388,7 +429,13 @@ ensure_nvidia_runtime() {
     fi
 
     info "NVIDIA GPU detected."
-    ensure_nvidia_smi_binary || true
+    if ! ensure_nvidia_smi_binary; then
+        if is_truthy "$REQUIRE_GPU_READY"; then
+            error "Failed to provision nvidia-smi on host and REQUIRE_GPU_READY=$REQUIRE_GPU_READY."
+            return 1
+        fi
+        warn "Proceeding without nvidia-smi because REQUIRE_GPU_READY=$REQUIRE_GPU_READY."
+    fi
 
     if ! nvidia_ready; then
         case "$INSTALL_NVIDIA_DRIVERS" in
@@ -423,7 +470,13 @@ ensure_nvidia_runtime() {
                 ;;
         esac
     fi
-    ensure_nvidia_smi_binary || true
+
+    if ! ensure_nvidia_smi_binary; then
+        if is_truthy "$REQUIRE_GPU_READY"; then
+            error "nvidia-smi is still unavailable after driver setup and REQUIRE_GPU_READY=$REQUIRE_GPU_READY."
+            return 1
+        fi
+    fi
 
     if ! nvidia_ready; then
         if is_truthy "$REQUIRE_GPU_READY"; then
