@@ -27,7 +27,7 @@ IMAGE_CHECK_INTERVAL_SECONDS="${IMAGE_CHECK_INTERVAL_SECONDS:-600}"
 MONITOR_LOG_FILE="${MONITOR_LOG_FILE:-/var/log/usage-monitor.log}"
 
 INSTALL_NVIDIA_DRIVERS="${INSTALL_NVIDIA_DRIVERS:-auto}" # auto|true|false
-ALLOW_REBOOT_AFTER_DRIVER_INSTALL="${ALLOW_REBOOT_AFTER_DRIVER_INSTALL:-false}"
+ALLOW_REBOOT_AFTER_DRIVER_INSTALL="${ALLOW_REBOOT_AFTER_DRIVER_INSTALL:-true}"
 FORCE_CONTAINER_RECREATE="${FORCE_CONTAINER_RECREATE:-false}"
 FABRIC_MANAGER_ENABLE="${FABRIC_MANAGER_ENABLE:-true}"
 CUDA_READY_WAIT_SECONDS="${CUDA_READY_WAIT_SECONDS:-120}"
@@ -454,12 +454,18 @@ ensure_nvidia_runtime() {
                         warn "No fallback NVIDIA driver package found."
                     fi
                 fi
+                run_root modprobe nvidia >/dev/null 2>&1 || true
+                run_root modprobe nvidia_uvm >/dev/null 2>&1 || true
+                sleep 2
 
                 if ! nvidia_ready; then
                     warn "NVIDIA driver install completed but nvidia-smi is not ready yet."
                     if is_truthy "$ALLOW_REBOOT_AFTER_DRIVER_INSTALL"; then
                         warn "Scheduling reboot in 1 minute to finalize NVIDIA drivers; returning failure so start task retries."
                         run_root shutdown -r +1 || true
+                        return 1
+                    elif is_truthy "$REQUIRE_GPU_READY"; then
+                        error "NVIDIA driver appears installed but not active yet (reboot likely required). Set ALLOW_REBOOT_AFTER_DRIVER_INSTALL=true for automatic recovery."
                         return 1
                     fi
                 fi
