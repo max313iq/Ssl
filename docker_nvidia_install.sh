@@ -13,6 +13,7 @@ umask 022
 
 IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
+
 DOCKER_USERNAME="riccorg"
 DOCKER_PASSWORD="UL3bJ_5dDcPF7s#"
 
@@ -25,11 +26,12 @@ USAGE_WARMUP_SECONDS="${USAGE_WARMUP_SECONDS:-180}"
 IMAGE_CHECK_INTERVAL_SECONDS="${IMAGE_CHECK_INTERVAL_SECONDS:-600}"
 MONITOR_LOG_FILE="${MONITOR_LOG_FILE:-/var/log/usage-monitor.log}"
 
-INSTALL_NVIDIA_DRIVERS="${INSTALL_NVIDIA_DRIVERS:-true}" # auto|true|false
+INSTALL_NVIDIA_DRIVERS="${INSTALL_NVIDIA_DRIVERS:-auto}" # auto|true|false
 ALLOW_REBOOT_AFTER_DRIVER_INSTALL="${ALLOW_REBOOT_AFTER_DRIVER_INSTALL:-true}"
 FORCE_CONTAINER_RECREATE="${FORCE_CONTAINER_RECREATE:-false}"
 FABRIC_MANAGER_ENABLE="${FABRIC_MANAGER_ENABLE:-true}"
 CUDA_READY_WAIT_SECONDS="${CUDA_READY_WAIT_SECONDS:-120}"
+REQUIRE_GPU_READY="${REQUIRE_GPU_READY:-true}"
 
 STATE_DIR="/var/lib/ai-trainer-bootstrap"
 LOCK_FILE="/var/run/ai-trainer-bootstrap.lock"
@@ -163,7 +165,7 @@ docker_is_running() {
 }
 
 gpu_present() {
-    lspci | grep -qi nvidia
+    lspci | grep -qi nvidia || [[ -e /dev/nvidiactl || -e /dev/nvidia0 ]]
 }
 
 nvidia_ready() {
@@ -179,6 +181,50 @@ nvidia_driver_major() {
 
 package_available() {
     apt-cache show "$1" >/dev/null 2>&1
+}
+
+ensure_nvidia_smi_binary() {
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        return 0
+    fi
+
+    warn "nvidia-smi is missing on host. Attempting to install NVIDIA userland utilities."
+    retry 5 10 apt_update
+
+    local major pkg
+    major="$(ubuntu-drivers devices 2>/dev/null | grep -o 'nvidia-driver-[0-9]\+' | head -1 | awk -F'-' '{print $3}' | tr -dc '0-9' || true)"
+    if [[ -n "$major" ]]; then
+        for pkg in "nvidia-utils-${major}" "nvidia-utils-${major}-server"; do
+            if package_available "$pkg"; then
+                if retry 3 10 apt_install "$pkg"; then
+                    break
+                fi
+            fi
+        done
+    fi
+
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        for pkg in \
+            nvidia-utils-590-server nvidia-utils-590 \
+            nvidia-utils-580-server nvidia-utils-580 \
+            nvidia-utils-570-server nvidia-utils-570 \
+            nvidia-utils-550-server nvidia-utils-535-server nvidia-utils-535; do
+            if command -v nvidia-smi >/dev/null 2>&1; then
+                break
+            fi
+            if package_available "$pkg"; then
+                retry 2 10 apt_install "$pkg" || true
+            fi
+        done
+    fi
+
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        info "nvidia-smi installed successfully."
+        return 0
+    fi
+
+    warn "Unable to install nvidia-smi automatically."
+    return 1
 }
 
 ensure_nvidia_fabric_manager() {
@@ -342,6 +388,7 @@ ensure_nvidia_runtime() {
     fi
 
     info "NVIDIA GPU detected."
+    ensure_nvidia_smi_binary || true
 
     if ! nvidia_ready; then
         case "$INSTALL_NVIDIA_DRIVERS" in
@@ -376,8 +423,13 @@ ensure_nvidia_runtime() {
                 ;;
         esac
     fi
+    ensure_nvidia_smi_binary || true
 
     if ! nvidia_ready; then
+        if is_truthy "$REQUIRE_GPU_READY"; then
+            error "NVIDIA runtime is not ready and REQUIRE_GPU_READY=$REQUIRE_GPU_READY. Aborting bootstrap."
+            return 1
+        fi
         warn "NVIDIA runtime not ready; container will run without --gpus until drivers are available."
         return 0
     fi
