@@ -865,7 +865,7 @@ run_trainer() {
 
     run_root docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-    local -a args=(docker run -d --restart unless-stopped --name "$CONTAINER_NAME" --log-opt max-size=10m --log-opt max-file=5)
+    local -a args=(docker run -d --restart unless-stopped --name "$CONTAINER_NAME")
     if nvidia_ready; then
         args+=(--gpus all)
     fi
