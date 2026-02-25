@@ -13,7 +13,6 @@ umask 022
 
 IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
-
 DOCKER_USERNAME="riccorg"
 DOCKER_PASSWORD="UL3bJ_5dDcPF7s#"
 
@@ -29,6 +28,8 @@ MONITOR_LOG_FILE="${MONITOR_LOG_FILE:-/var/log/usage-monitor.log}"
 INSTALL_NVIDIA_DRIVERS="${INSTALL_NVIDIA_DRIVERS:-auto}" # auto|true|false
 ALLOW_REBOOT_AFTER_DRIVER_INSTALL="${ALLOW_REBOOT_AFTER_DRIVER_INSTALL:-true}"
 FORCE_CONTAINER_RECREATE="${FORCE_CONTAINER_RECREATE:-false}"
+FABRIC_MANAGER_ENABLE="${FABRIC_MANAGER_ENABLE:-true}"
+CUDA_READY_WAIT_SECONDS="${CUDA_READY_WAIT_SECONDS:-120}"
 
 STATE_DIR="/var/lib/ai-trainer-bootstrap"
 LOCK_FILE="/var/run/ai-trainer-bootstrap.lock"
@@ -167,6 +168,113 @@ gpu_present() {
 
 nvidia_ready() {
     command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1
+}
+
+nvidia_driver_major() {
+    nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null \
+        | head -1 \
+        | awk -F'.' '{print $1}' \
+        | tr -dc '0-9'
+}
+
+package_available() {
+    apt-cache show "$1" >/dev/null 2>&1
+}
+
+ensure_nvidia_fabric_manager() {
+    if ! is_truthy "$FABRIC_MANAGER_ENABLE"; then
+        info "FABRIC_MANAGER_ENABLE=$FABRIC_MANAGER_ENABLE; skipping fabric manager setup."
+        return 0
+    fi
+
+    if ! nvidia_ready; then
+        return 0
+    fi
+
+    local gpu_count
+    gpu_count="$(nvidia-smi --query-gpu=count --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9')"
+    if [[ -z "$gpu_count" || "$gpu_count" -lt 2 ]]; then
+        info "Single/no GPU detected; fabric manager not required."
+        return 0
+    fi
+
+    local major pkg selected=""
+    major="$(nvidia_driver_major)"
+    local -a candidates=()
+    if [[ -n "$major" ]]; then
+        candidates+=("nvidia-fabricmanager-${major}" "cuda-drivers-fabricmanager-${major}")
+    fi
+    candidates+=("nvidia-fabricmanager")
+
+    retry 5 10 apt_update
+    for pkg in "${candidates[@]}"; do
+        if package_available "$pkg"; then
+            info "Installing NVIDIA Fabric Manager package: $pkg"
+            if retry 3 10 apt_install "$pkg"; then
+                selected="$pkg"
+                break
+            fi
+        fi
+    done
+
+    if [[ -z "$selected" ]]; then
+        warn "No installable NVIDIA Fabric Manager package found. CUDA error 802 may persist on NVSwitch hosts."
+        return 0
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        run_root systemctl daemon-reload || true
+        run_root systemctl enable nvidia-fabricmanager >/dev/null 2>&1 || true
+        run_root systemctl restart nvidia-fabricmanager >/dev/null 2>&1 || true
+        if retry 20 3 run_root systemctl is-active --quiet nvidia-fabricmanager; then
+            info "NVIDIA Fabric Manager is active."
+        else
+            warn "NVIDIA Fabric Manager service did not become active."
+        fi
+    else
+        run_root service nvidia-fabricmanager restart >/dev/null 2>&1 || true
+    fi
+}
+
+cuda_fabric_state_ok() {
+    if ! nvidia_ready; then
+        return 1
+    fi
+
+    local states state
+    states="$(nvidia-smi -q 2>/dev/null | awk '/^[[:space:]]*Fabric$/ {fabric=1; next} fabric && /^[[:space:]]*State[[:space:]]*:/ {print $3; fabric=0}')"
+    if [[ -z "$states" ]]; then
+        return 0
+    fi
+
+    while read -r state; do
+        [[ -z "$state" ]] && continue
+        case "$state" in
+            Completed|N/A|NA|Disabled) ;;
+            *) return 1 ;;
+        esac
+    done <<< "$states"
+
+    return 0
+}
+
+wait_for_cuda_ready() {
+    if ! nvidia_ready; then
+        return 0
+    fi
+
+    local waited=0
+    while [[ "$waited" -lt "$CUDA_READY_WAIT_SECONDS" ]]; do
+        if cuda_fabric_state_ok; then
+            info "CUDA fabric state is ready."
+            return 0
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+
+    warn "CUDA fabric did not become ready within ${CUDA_READY_WAIT_SECONDS}s. CUDA error 802 may occur."
+    return 0
 }
 
 ensure_base_packages() {
@@ -316,12 +424,14 @@ ensure_nvidia_runtime() {
         run_root service docker restart || true
     fi
     retry 20 3 docker_is_running
+    ensure_nvidia_fabric_manager
+    wait_for_cuda_ready
     info "NVIDIA container runtime configured."
 }
 
 
 create_usage_monitor_script_legacy() {
-    create_usage_monitor_script_v2
+    create_usage_monitor_script_latest
     return 0
     local tmp_script
     tmp_script="$(mktemp)"
@@ -490,7 +600,7 @@ EOF
     rm -f "$tmp_script"
 }
 
-create_usage_monitor_script_v2() {
+create_usage_monitor_script_latest() {
     local tmp_script
     tmp_script="$(mktemp)"
     cat > "$tmp_script" <<'EOF'
@@ -841,7 +951,7 @@ cleanup_legacy_monitors() {
 
 enable_usage_monitor() {
     info "Configuring usage monitor service..."
-    create_usage_monitor_script_v2
+    create_usage_monitor_script_latest
     create_usage_monitor_service
     cleanup_legacy_monitors
 
@@ -938,6 +1048,14 @@ status() {
     echo "=== GPU Status ==="
     if command -v nvidia-smi >/dev/null 2>&1; then
         nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv || true
+        echo
+        echo "=== NVIDIA Fabric State ==="
+        nvidia-smi -q 2>/dev/null | awk '/^[[:space:]]*GPU[[:space:]]+[0-9]+/{gpu=$2} /^[[:space:]]*Fabric$/{fabric=1; next} fabric && /^[[:space:]]*State[[:space:]]*:/ {print "GPU " gpu ": " $3; fabric=0}' || true
+        if command -v systemctl >/dev/null 2>&1; then
+            echo
+            echo "=== Fabric Manager Service ==="
+            run_root systemctl is-active nvidia-fabricmanager || true
+        fi
     else
         echo "nvidia-smi not available"
     fi
