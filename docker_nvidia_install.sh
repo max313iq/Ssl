@@ -239,6 +239,9 @@ ensure_nvidia_smi_binary() {
             fi
             if package_available "$pkg"; then
                 retry 2 10 apt_install "$pkg" || true
+            else
+                # Try direct install anyway (apt-cache can be incomplete/transient on some node images)
+                retry 1 5 apt_install "$pkg" || true
             fi
         done
     fi
@@ -430,11 +433,7 @@ ensure_nvidia_runtime() {
 
     info "NVIDIA GPU detected."
     if ! ensure_nvidia_smi_binary; then
-        if is_truthy "$REQUIRE_GPU_READY"; then
-            error "Failed to provision nvidia-smi on host and REQUIRE_GPU_READY=$REQUIRE_GPU_READY."
-            return 1
-        fi
-        warn "Proceeding without nvidia-smi because REQUIRE_GPU_READY=$REQUIRE_GPU_READY."
+        warn "nvidia-smi is not ready yet; continuing with driver installation path."
     fi
 
     if ! nvidia_ready; then
