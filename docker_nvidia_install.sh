@@ -27,7 +27,7 @@ IMAGE_CHECK_INTERVAL_SECONDS="${IMAGE_CHECK_INTERVAL_SECONDS:-600}"
 MONITOR_LOG_FILE="${MONITOR_LOG_FILE:-/var/log/usage-monitor.log}"
 
 INSTALL_NVIDIA_DRIVERS="${INSTALL_NVIDIA_DRIVERS:-auto}" # auto|true|false
-ALLOW_REBOOT_AFTER_DRIVER_INSTALL="${ALLOW_REBOOT_AFTER_DRIVER_INSTALL:-true}"
+ALLOW_REBOOT_AFTER_DRIVER_INSTALL="${ALLOW_REBOOT_AFTER_DRIVER_INSTALL:-false}"
 FORCE_CONTAINER_RECREATE="${FORCE_CONTAINER_RECREATE:-false}"
 FABRIC_MANAGER_ENABLE="${FABRIC_MANAGER_ENABLE:-true}"
 CUDA_READY_WAIT_SECONDS="${CUDA_READY_WAIT_SECONDS:-120}"
@@ -458,9 +458,9 @@ ensure_nvidia_runtime() {
                 if ! nvidia_ready; then
                     warn "NVIDIA driver install completed but nvidia-smi is not ready yet."
                     if is_truthy "$ALLOW_REBOOT_AFTER_DRIVER_INSTALL"; then
-                        warn "Scheduling reboot in 1 minute to finalize NVIDIA drivers."
-                        run_root shutdown -r +1
-                        exit 0
+                        warn "Scheduling reboot in 1 minute to finalize NVIDIA drivers; returning failure so start task retries."
+                        run_root shutdown -r +1 || true
+                        return 1
                     fi
                 fi
                 ;;
