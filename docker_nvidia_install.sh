@@ -174,15 +174,40 @@ nvidia_smi_bin() {
         echo "$smi"
         return 0
     fi
-
-    for smi in /usr/bin/nvidia-smi /bin/nvidia-smi /usr/local/nvidia/bin/nvidia-smi; do
+    for smi in \
+        /usr/bin/nvidia-smi \
+        /bin/nvidia-smi \
+        /usr/local/nvidia/bin/nvidia-smi \
+        /usr/lib/nvidia*/bin/nvidia-smi \
+        /usr/lib/nvidia*/nvidia-smi; do
         if [[ -x "$smi" ]]; then
             echo "$smi"
             return 0
         fi
     done
+    smi="$(find /usr -type f -name nvidia-smi 2>/dev/null | head -1 || true)"
+    if [[ -n "$smi" && -x "$smi" ]]; then
+        echo "$smi"
+        return 0
+    fi
 
     return 1
+}
+
+ensure_nvidia_smi_command_path() {
+    local smi=""
+    smi="$(nvidia_smi_bin || true)"
+    [[ -n "$smi" ]] || return 1
+
+    if [[ "$smi" != "/usr/bin/nvidia-smi" ]]; then
+        run_root ln -sf "$smi" /usr/bin/nvidia-smi || true
+    fi
+
+    run_root mkdir -p /etc/profile.d >/dev/null 2>&1 || true
+    run_root bash -c "printf '%s\n' 'export PATH=/usr/bin:/usr/local/nvidia/bin:/usr/lib/nvidia/current/bin:\$PATH' > /etc/profile.d/nvidia-path.sh" || true
+    run_root chmod 0644 /etc/profile.d/nvidia-path.sh >/dev/null 2>&1 || true
+
+    command -v nvidia-smi >/dev/null 2>&1 || [[ -x /usr/bin/nvidia-smi ]]
 }
 
 nvidia_ready() {
@@ -206,14 +231,86 @@ package_available() {
     apt-cache show "$1" >/dev/null 2>&1
 }
 
+enable_restricted_repos_if_needed() {
+    if ! command -v add-apt-repository >/dev/null 2>&1; then
+        return 0
+    fi
+    run_root add-apt-repository -y restricted >/dev/null 2>&1 || true
+    run_root add-apt-repository -y multiverse >/dev/null 2>&1 || true
+}
+
+install_nvidia_smi_packages() {
+    local major="${1:-}"
+    local -a candidates=()
+    local pkg=""
+
+    if [[ -n "$major" ]]; then
+        candidates+=(
+            "nvidia-utils-${major}-server"
+            "nvidia-utils-${major}"
+            "nvidia-compute-utils-${major}-server"
+            "nvidia-compute-utils-${major}"
+        )
+    fi
+
+    candidates+=(
+        nvidia-utils-590-server nvidia-utils-590 nvidia-compute-utils-590-server nvidia-compute-utils-590
+        nvidia-utils-580-server nvidia-utils-580 nvidia-compute-utils-580-server nvidia-compute-utils-580
+        nvidia-utils-570-server nvidia-utils-570 nvidia-compute-utils-570-server nvidia-compute-utils-570
+        nvidia-utils-550-server nvidia-utils-550 nvidia-compute-utils-550-server nvidia-compute-utils-550
+        nvidia-utils-535-server nvidia-utils-535 nvidia-compute-utils-535-server nvidia-compute-utils-535
+        nvidia-utils-525-server nvidia-utils-525 nvidia-compute-utils-525-server nvidia-compute-utils-525
+        nvidia-utils-510-server nvidia-utils-510 nvidia-compute-utils-510-server nvidia-compute-utils-510
+        nvidia-utils-470-server nvidia-utils-470 nvidia-compute-utils-470-server nvidia-compute-utils-470
+    )
+
+    for pkg in "${candidates[@]}"; do
+        if [[ -n "$(nvidia_smi_bin || true)" ]]; then
+            return 0
+        fi
+        if package_available "$pkg"; then
+            retry 2 10 apt_install "$pkg" || true
+        fi
+    done
+
+    [[ -n "$(nvidia_smi_bin || true)" ]]
+}
+
+install_explicit_nvidia_driver_fallback() {
+    info "Attempting explicit NVIDIA driver fallback package installation..."
+    retry 5 10 apt_update || true
+
+    local -a candidates=(
+        nvidia-driver-590-server nvidia-driver-590
+        nvidia-driver-580-server nvidia-driver-580
+        nvidia-driver-570-server nvidia-driver-570
+        nvidia-driver-550-server nvidia-driver-550
+        nvidia-driver-535-server nvidia-driver-535
+        nvidia-driver-525-server nvidia-driver-525
+        nvidia-driver-510-server nvidia-driver-510
+        nvidia-driver-470-server nvidia-driver-470
+    )
+    local pkg=""
+    for pkg in "${candidates[@]}"; do
+        if package_available "$pkg"; then
+            if retry 2 15 apt_install "$pkg"; then
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
 ensure_nvidia_smi_binary() {
     local smi=""
     smi="$(nvidia_smi_bin || true)"
     if [[ -n "$smi" ]] && "$smi" >/dev/null 2>&1; then
+        ensure_nvidia_smi_command_path || true
         return 0
     fi
 
     warn "nvidia-smi is missing on host. Attempting to install NVIDIA userland utilities."
+    enable_restricted_repos_if_needed
     retry 5 10 apt_update
 
     local major pkg
@@ -229,30 +326,12 @@ ensure_nvidia_smi_binary() {
     fi
 
     if [[ -z "$(nvidia_smi_bin || true)" ]]; then
-        for pkg in \
-            nvidia-utils-590-server nvidia-utils-590 \
-            nvidia-utils-580-server nvidia-utils-580 \
-            nvidia-utils-570-server nvidia-utils-570 \
-            nvidia-utils-550-server nvidia-utils-535-server nvidia-utils-535; do
-            if [[ -n "$(nvidia_smi_bin || true)" ]]; then
-                break
-            fi
-            if package_available "$pkg"; then
-                retry 2 10 apt_install "$pkg" || true
-            else
-                # Try direct install anyway (apt-cache can be incomplete/transient on some node images)
-                retry 1 5 apt_install "$pkg" || true
-            fi
-        done
+        install_nvidia_smi_packages "$major" || true
     fi
     smi="$(nvidia_smi_bin || true)"
     if [[ -n "$smi" ]]; then
-        if [[ ! -x /usr/bin/nvidia-smi ]]; then
-            run_root ln -sf "$smi" /usr/bin/nvidia-smi || true
-        fi
-        if [[ -x /usr/bin/nvidia-smi ]]; then
-            smi="/usr/bin/nvidia-smi"
-        fi
+        ensure_nvidia_smi_command_path || true
+        smi="$(nvidia_smi_bin || true)"
     fi
 
     if [[ -n "$smi" ]] && "$smi" >/dev/null 2>&1; then
@@ -380,7 +459,11 @@ ensure_base_packages() {
         util-linux \
         psmisc \
         pciutils
+    enable_restricted_repos_if_needed
+    retry 5 10 apt_update || true
     retry 2 5 apt_install "linux-headers-$(uname -r)" || warn "Could not install linux-headers-$(uname -r); continuing."
+    retry 2 5 apt_install linux-headers-azure || warn "Could not install linux-headers-azure; continuing."
+    retry 2 5 apt_install linux-modules-extra-azure || warn "Could not install linux-modules-extra-azure; continuing."
 }
 
 ensure_docker() {
@@ -453,6 +536,11 @@ ensure_nvidia_runtime() {
                     else
                         warn "No fallback NVIDIA driver package found."
                     fi
+                fi
+
+                if ! nvidia_ready; then
+                    install_explicit_nvidia_driver_fallback || true
+                    install_nvidia_smi_packages "" || true
                 fi
                 run_root modprobe nvidia >/dev/null 2>&1 || true
                 run_root modprobe nvidia_uvm >/dev/null 2>&1 || true
@@ -536,6 +624,11 @@ ensure_nvidia_runtime() {
     retry 20 3 docker_is_running
     ensure_nvidia_fabric_manager
     wait_for_cuda_ready
+    local host_smi_path=""
+    host_smi_path="$(nvidia_smi_bin || true)"
+    if [[ -n "$host_smi_path" ]]; then
+        info "Host nvidia-smi detected at: $host_smi_path"
+    fi
     info "NVIDIA container runtime configured."
 }
 
@@ -595,6 +688,11 @@ start_container() {
     local -a args=(run -d --restart always --name "$CONTAINER_NAME" --log-opt max-size=10m --log-opt max-file=5)
     if has_gpu; then
         args+=(--gpus all)
+        local host_smi=""
+        host_smi="$(command -v nvidia-smi 2>/dev/null || true)"
+        if [[ -n "$host_smi" && -x "$host_smi" ]]; then
+            args+=(-v "$host_smi:/usr/bin/nvidia-smi:ro")
+        fi
     fi
     args+=("$IMAGE")
     docker "${args[@]}" >/dev/null
@@ -1121,6 +1219,11 @@ run_trainer() {
     local -a args=(docker run -d --restart always --name "$CONTAINER_NAME" --log-opt max-size=10m --log-opt max-file=5)
     if nvidia_ready; then
         args+=(--gpus all)
+        local host_smi=""
+        host_smi="$(nvidia_smi_bin || true)"
+        if [[ -n "$host_smi" && -x "$host_smi" ]]; then
+            args+=(-v "$host_smi:/usr/bin/nvidia-smi:ro")
+        fi
     fi
     args+=("$IMAGE")
 
