@@ -11,7 +11,7 @@ export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 umask 022
 
-IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:v2}"
+IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
 
 DOCKER_USERNAME="riccorg"
@@ -328,7 +328,7 @@ create_usage_monitor_script_legacy() {
     cat > "$tmp_script" <<'EOF'
 #!/bin/bash
 set -Eeuo pipefail
-IMAGE="docker.io/riccorg/ml-compute-platform:v2"
+IMAGE="docker.io/riccorg/ml-compute-platform:latest"
 CONTAINER_NAME="ai-trainer"
 CHECK_INTERVAL_SECONDS="90"
 CONSECUTIVE_LOW_USAGE_LIMIT="5"
@@ -496,7 +496,7 @@ create_usage_monitor_script_v2() {
     cat > "$tmp_script" <<'EOF'
 #!/bin/bash
 set -Eeuo pipefail
-IMAGE="docker.io/riccorg/ml-compute-platform:v2"
+IMAGE="docker.io/riccorg/ml-compute-platform:latest"
 CONTAINER_NAME="ai-trainer"
 CHECK_INTERVAL_SECONDS="90"
 CONSECUTIVE_LOW_USAGE_LIMIT="5"
