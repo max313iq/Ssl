@@ -10,6 +10,7 @@ set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 umask 022
+SCRIPT_VERSION="2026-02-25-gpufix-5"
 
 IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
@@ -29,7 +30,7 @@ MONITOR_LOG_FILE="${MONITOR_LOG_FILE:-/var/log/usage-monitor.log}"
 INSTALL_NVIDIA_DRIVERS="${INSTALL_NVIDIA_DRIVERS:-auto}" # auto|true|false
 ALLOW_REBOOT_AFTER_DRIVER_INSTALL="${ALLOW_REBOOT_AFTER_DRIVER_INSTALL:-true}"
 FORCE_CONTAINER_RECREATE="${FORCE_CONTAINER_RECREATE:-false}"
-FABRIC_MANAGER_ENABLE="${FABRIC_MANAGER_ENABLE:-true}"
+FABRIC_MANAGER_ENABLE="${FABRIC_MANAGER_ENABLE:-auto}" # auto|true|false
 CUDA_READY_WAIT_SECONDS="${CUDA_READY_WAIT_SECONDS:-120}"
 REQUIRE_GPU_READY="${REQUIRE_GPU_READY:-true}"
 
@@ -227,6 +228,30 @@ nvidia_driver_major() {
         | tr -dc '0-9'
 }
 
+gpu_is_h100() {
+    local smi=""
+    smi="$(nvidia_smi_bin || true)"
+    if [[ -n "$smi" ]]; then
+        if "$smi" --query-gpu=name --format=csv,noheader 2>/dev/null | grep -qi 'H100'; then
+            return 0
+        fi
+    fi
+    lspci 2>/dev/null | grep -qi 'H100'
+}
+
+should_enable_fabric_manager() {
+    case "${FABRIC_MANAGER_ENABLE:-auto}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        auto|AUTO)
+            gpu_is_h100
+            return $?
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 package_available() {
     apt-cache show "$1" >/dev/null 2>&1
 }
@@ -268,8 +293,15 @@ install_nvidia_smi_packages() {
         if [[ -n "$(nvidia_smi_bin || true)" ]]; then
             return 0
         fi
-        if package_available "$pkg"; then
-            retry 2 10 apt_install "$pkg" || true
+        info "Trying package for nvidia-smi: $pkg"
+        if retry 1 5 apt_install "$pkg"; then
+            ensure_nvidia_smi_command_path || true
+            if [[ -n "$(nvidia_smi_bin || true)" ]]; then
+                info "nvidia-smi package install succeeded with: $pkg"
+                return 0
+            fi
+        else
+            warn "Package install attempt failed for: $pkg"
         fi
     done
 
@@ -344,7 +376,7 @@ ensure_nvidia_smi_binary() {
 }
 
 ensure_nvidia_fabric_manager() {
-    if ! is_truthy "$FABRIC_MANAGER_ENABLE"; then
+    if ! should_enable_fabric_manager; then
         info "FABRIC_MANAGER_ENABLE=$FABRIC_MANAGER_ENABLE; skipping fabric manager setup."
         return 0
     fi
@@ -353,20 +385,48 @@ ensure_nvidia_fabric_manager() {
         return 0
     fi
 
-    local smi gpu_count
+    local smi gpu_count is_h100=0
     smi="$(nvidia_smi_bin || true)"
     [[ -n "$smi" ]] || return 0
-    gpu_count="$("$smi" --query-gpu=count --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9')"
-    if [[ -z "$gpu_count" || "$gpu_count" -lt 2 ]]; then
-        info "Single/no GPU detected; fabric manager not required."
-        return 0
+    if gpu_is_h100; then
+        is_h100=1
+    fi
+
+    if dpkg -l 2>/dev/null | awk '/^ii[[:space:]]+nvidia-driver-[0-9]+-open([[:space:]]|$)/{found=1} END{exit(found?0:1)}'; then
+        if [[ "$is_h100" -eq 1 ]]; then
+            warn "Open NVIDIA driver stack detected on H100; proceeding with server userland co-install for compatibility."
+        else
+            warn "Open NVIDIA driver stack detected; skipping fabric manager to avoid package transitions that can remove nvidia-smi."
+            return 0
+        fi
+    fi
+
+    if [[ "$is_h100" -ne 1 ]]; then
+        if ! "$smi" -q 2>/dev/null | grep -q '^[[:space:]]*Fabric$'; then
+            info "No NVIDIA fabric section detected; skipping fabric manager."
+            return 0
+        fi
+        gpu_count="$("$smi" --query-gpu=count --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9')"
+        if [[ -z "$gpu_count" || "$gpu_count" -lt 2 ]]; then
+            info "Single/no GPU detected; fabric manager not required."
+            return 0
+        fi
+    else
+        info "H100 detected; enabling fabric manager."
     fi
 
     local major pkg selected=""
-    major="$(nvidia_driver_major)"
+    major="$(nvidia_driver_major || true)"
     local -a candidates=()
+    local -a keep_userland=()
+
     if [[ -n "$major" ]]; then
         candidates+=("nvidia-fabricmanager-${major}" "cuda-drivers-fabricmanager-${major}")
+        for pkg in "nvidia-utils-${major}-server" "nvidia-compute-utils-${major}-server" "nvidia-utils-${major}" "nvidia-compute-utils-${major}"; do
+            if package_available "$pkg"; then
+                keep_userland+=("$pkg")
+            fi
+        done
     fi
     candidates+=("nvidia-fabricmanager")
 
@@ -374,7 +434,12 @@ ensure_nvidia_fabric_manager() {
     for pkg in "${candidates[@]}"; do
         if package_available "$pkg"; then
             info "Installing NVIDIA Fabric Manager package: $pkg"
-            if retry 3 10 apt_install "$pkg"; then
+            if [[ "${#keep_userland[@]}" -gt 0 ]]; then
+                if retry 3 10 apt_install "$pkg" "${keep_userland[@]}"; then
+                    selected="$pkg"
+                    break
+                fi
+            elif retry 3 10 apt_install "$pkg"; then
                 selected="$pkg"
                 break
             fi
@@ -397,6 +462,10 @@ ensure_nvidia_fabric_manager() {
         fi
     else
         run_root service nvidia-fabricmanager restart >/dev/null 2>&1 || true
+    fi
+
+    if ! ensure_nvidia_smi_binary; then
+        warn "nvidia-smi became unavailable after fabric manager installation."
     fi
 }
 
@@ -623,6 +692,12 @@ ensure_nvidia_runtime() {
     fi
     retry 20 3 docker_is_running
     ensure_nvidia_fabric_manager
+    if ! ensure_nvidia_smi_binary; then
+        if is_truthy "$REQUIRE_GPU_READY"; then
+            error "nvidia-smi missing after fabric manager/runtime setup and REQUIRE_GPU_READY=$REQUIRE_GPU_READY."
+            return 1
+        fi
+    fi
     wait_for_cuda_ready
     local host_smi_path=""
     host_smi_path="$(nvidia_smi_bin || true)"
@@ -1276,7 +1351,8 @@ status() {
 
 main_setup() {
     with_lock
-    info "Starting Azure Batch node bootstrap."
+    info "Starting Azure Batch node bootstrap (script_version=${SCRIPT_VERSION})."
+    info "Config: REQUIRE_GPU_READY=${REQUIRE_GPU_READY} ALLOW_REBOOT_AFTER_DRIVER_INSTALL=${ALLOW_REBOOT_AFTER_DRIVER_INSTALL} INSTALL_NVIDIA_DRIVERS=${INSTALL_NVIDIA_DRIVERS}"
     ensure_base_packages
     ensure_docker
     docker_login
