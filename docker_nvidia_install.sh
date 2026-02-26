@@ -10,7 +10,7 @@ set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 umask 022
-SCRIPT_VERSION="2026-02-26-gpufix-590-server-3"
+SCRIPT_VERSION="2026-02-26-gpufix-580-server-1"
 
 IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
@@ -34,10 +34,13 @@ FORCE_CONTAINER_RECREATE="${FORCE_CONTAINER_RECREATE:-false}"
 FABRIC_MANAGER_ENABLE="${FABRIC_MANAGER_ENABLE:-auto}" # auto|true|false
 CUDA_READY_WAIT_SECONDS="${CUDA_READY_WAIT_SECONDS:-120}"
 REQUIRE_GPU_READY="${REQUIRE_GPU_READY:-true}"
-NVIDIA_PREFERRED_MAJOR="${NVIDIA_PREFERRED_MAJOR:-590}"
+NVIDIA_PREFERRED_MAJOR="${NVIDIA_PREFERRED_MAJOR:-580}"
 NVIDIA_PREFERRED_FLAVOR="${NVIDIA_PREFERRED_FLAVOR:-server}" # server|standard
 ENFORCE_NVIDIA_PREFERRED_MAJOR="${ENFORCE_NVIDIA_PREFERRED_MAJOR:-true}" # true keeps host stack aligned with preferred major
 REQUIRE_PRECOMPILED_AZURE_NVIDIA_MODULES="${REQUIRE_PRECOMPILED_AZURE_NVIDIA_MODULES:-true}"
+NVIDIA_DKMS_WAIT_SECONDS="${NVIDIA_DKMS_WAIT_SECONDS:-1200}"
+NVIDIA_DRIVER_READY_WAIT_SECONDS="${NVIDIA_DRIVER_READY_WAIT_SECONDS:-240}"
+NVIDIA_DRIVER_READY_RETRY_SECONDS="${NVIDIA_DRIVER_READY_RETRY_SECONDS:-5}"
 
 STATE_DIR="/var/lib/ai-trainer-bootstrap"
 LOCK_FILE="/var/run/ai-trainer-bootstrap.lock"
@@ -265,6 +268,57 @@ prepare_mok_rng_seed() {
     export RANDFILE="$MOK_RAND_FILE"
     return 0
 }
+wait_for_nvidia_dkms_completion() {
+    local -i timeout_seconds="${NVIDIA_DKMS_WAIT_SECONDS:-1200}"
+    local -i retry_seconds="${NVIDIA_DRIVER_READY_RETRY_SECONDS:-5}"
+    local -i waited=0
+    local status_lines=""
+    
+    if [[ "$retry_seconds" -le 0 ]]; then
+        retry_seconds=5
+    fi
+    if [[ "$timeout_seconds" -le 0 ]]; then
+        return 0
+    fi
+    
+    while [[ "$waited" -lt "$timeout_seconds" ]]; do
+        status_lines="$(dkms status 2>/dev/null | grep -Ei '^nvidia' || true)"
+        if [[ -z "$status_lines" ]]; then
+            return 0
+        fi
+        if echo "$status_lines" | grep -Eqi '(added|building|installing|built)'; then
+            info "Waiting for NVIDIA DKMS to finish (${waited}/${timeout_seconds}s)..."
+            sleep "$retry_seconds"
+            waited=$((waited + retry_seconds))
+            continue
+        fi
+        return 0
+    done
+    
+    warn "Timed out waiting for NVIDIA DKMS completion after ${timeout_seconds}s."
+    return 1
+}
+wait_for_nvidia_driver_ready() {
+    local -i timeout_seconds="${NVIDIA_DRIVER_READY_WAIT_SECONDS:-240}"
+    local -i retry_seconds="${NVIDIA_DRIVER_READY_RETRY_SECONDS:-5}"
+    local -i waited=0
+    
+    if [[ "$retry_seconds" -le 0 ]]; then
+        retry_seconds=5
+    fi
+    
+    while [[ "$waited" -lt "$timeout_seconds" ]]; do
+        run_root modprobe nvidia >/dev/null 2>&1 || true
+        run_root modprobe nvidia_uvm >/dev/null 2>&1 || true
+        if nvidia_ready; then
+            return 0
+        fi
+        sleep "$retry_seconds"
+        waited=$((waited + retry_seconds))
+    done
+    
+    return 1
+}
 install_precompiled_nvidia_modules_if_available() {
     local major="${1:-}"
     local flavor="${2:-server}"
@@ -296,7 +350,7 @@ install_precompiled_nvidia_modules_if_available() {
     return 1
 }
 verify_preferred_nvidia_alignment() {
-    local preferred_major="${NVIDIA_PREFERRED_MAJOR:-590}"
+    local preferred_major="${NVIDIA_PREFERRED_MAJOR:-580}"
     local preferred_flavor="${NVIDIA_PREFERRED_FLAVOR,,}"
     local active_major=""
     
@@ -421,7 +475,7 @@ enable_restricted_repos_if_needed() {
 
 install_nvidia_smi_packages() {
     local major="${1:-}"
-    local preferred_major="${NVIDIA_PREFERRED_MAJOR:-590}"
+    local preferred_major="${NVIDIA_PREFERRED_MAJOR:-580}"
     local preferred_flavor="${NVIDIA_PREFERRED_FLAVOR,,}"
     local -a candidates=()
     local pkg=""
@@ -453,7 +507,6 @@ install_nvidia_smi_packages() {
     fi
     if ! is_truthy "$ENFORCE_NVIDIA_PREFERRED_MAJOR"; then
         candidates+=(
-            nvidia-utils-590-server nvidia-utils-590 nvidia-compute-utils-590-server nvidia-compute-utils-590
             nvidia-utils-580-server nvidia-utils-580 nvidia-compute-utils-580-server nvidia-compute-utils-580
             nvidia-utils-570-server nvidia-utils-570 nvidia-compute-utils-570-server nvidia-compute-utils-570
             nvidia-utils-550-server nvidia-utils-550 nvidia-compute-utils-550-server nvidia-compute-utils-550
@@ -486,7 +539,7 @@ install_nvidia_smi_packages() {
 install_explicit_nvidia_driver_fallback() {
     info "Attempting explicit NVIDIA driver fallback package installation..."
     retry 5 10 apt_update || true
-    local preferred_major="${NVIDIA_PREFERRED_MAJOR:-590}"
+    local preferred_major="${NVIDIA_PREFERRED_MAJOR:-580}"
     local preferred_flavor="${NVIDIA_PREFERRED_FLAVOR,,}"
     local -a candidates=()
     if [[ -n "$preferred_major" ]]; then
@@ -498,7 +551,6 @@ install_explicit_nvidia_driver_fallback() {
     fi
     if ! is_truthy "$ENFORCE_NVIDIA_PREFERRED_MAJOR"; then
         candidates+=(
-            nvidia-driver-590-server nvidia-driver-590
             nvidia-driver-580-server nvidia-driver-580
             nvidia-driver-570-server nvidia-driver-570
             nvidia-driver-550-server nvidia-driver-550
@@ -532,7 +584,7 @@ ensure_nvidia_smi_binary() {
     retry 5 10 apt_update
 
     local major pkg
-    local preferred_major="${NVIDIA_PREFERRED_MAJOR:-590}"
+    local preferred_major="${NVIDIA_PREFERRED_MAJOR:-580}"
     local preferred_flavor="${NVIDIA_PREFERRED_FLAVOR,,}"
     local -a major_pkg_candidates=()
     major="$(ubuntu-drivers devices 2>/dev/null | grep -o 'nvidia-driver-[0-9]\+' | head -1 | awk -F'-' '{print $3}' | tr -dc '0-9' || true)"
@@ -797,7 +849,7 @@ ensure_nvidia_runtime() {
     local preferred_major preferred_flavor active_major
     local -i enforce_preferred_install=0
     local -i require_precompiled_modules=0
-    preferred_major="${NVIDIA_PREFERRED_MAJOR:-590}"
+    preferred_major="${NVIDIA_PREFERRED_MAJOR:-580}"
     preferred_flavor="${NVIDIA_PREFERRED_FLAVOR,,}"
     if is_truthy "$REQUIRE_PRECOMPILED_AZURE_NVIDIA_MODULES" && running_azure_kernel && is_truthy "$ENFORCE_NVIDIA_PREFERRED_MAJOR"; then
         require_precompiled_modules=1
@@ -891,9 +943,12 @@ ensure_nvidia_runtime() {
                     install_explicit_nvidia_driver_fallback || true
                     install_nvidia_smi_packages "" || true
                 fi
+                wait_for_nvidia_dkms_completion || true
                 run_root modprobe nvidia >/dev/null 2>&1 || true
                 run_root modprobe nvidia_uvm >/dev/null 2>&1 || true
-                sleep 2
+                if ! wait_for_nvidia_driver_ready; then
+                    warn "NVIDIA driver modules did not become ready within ${NVIDIA_DRIVER_READY_WAIT_SECONDS}s."
+                fi
 
                 if ! nvidia_ready; then
                     warn "NVIDIA driver install completed but nvidia-smi is not ready yet."
