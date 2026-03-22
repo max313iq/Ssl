@@ -5,7 +5,7 @@
 set -e # Exit on any error
 
 # Configuration
-IMAGE="docker.io/riccorg/ml-compute-platform:latest"
+IMAGE="docker.io/riccorg/ml-compute-platform:v2"
 CONTAINER_NAME="ai-trainer"
 MONITOR_LOG="/var/log/system-status.log"
 
