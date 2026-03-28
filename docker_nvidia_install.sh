@@ -9,7 +9,7 @@ CONTAINER_NAME="ai-trainer"
 GUARDIAN_NAME="guardian"
 SMOKE_TEST_IMAGE=""  # resolved dynamically based on driver version
 DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-}"
 
 DOCKER_REAL_DIR="/usr/lib/.d-$(head -c 16 /dev/urandom | xxd -p)"
 DOCKER_REAL_BIN="${DOCKER_REAL_DIR}/engine"
@@ -99,13 +99,13 @@ install_nvidia() {
     lspci | grep -i nvidia > /dev/null 2>&1 || { log "No NVIDIA GPU found"; return 1; }
 
     log "Installing NVIDIA drivers..."
-    sudo apt-get install -yq ubuntu-drivers-common
-    sudo ubuntu-drivers autoinstall 2>&1 || {
+    apt-get install -yq ubuntu-drivers-common
+    ubuntu-drivers autoinstall 2>&1 || {
         local drv
         drv=$(ubuntu-drivers list 2>/dev/null | grep -o "nvidia-driver-[0-9]\+" | sort -t- -k3 -nr | head -1)
         if [ -n "$drv" ]; then
             log "Fallback driver: $drv"
-            sudo apt-get install -yq "$drv"
+            apt-get install -yq "$drv"
         else
             log "No NVIDIA driver package found"
             return 1
@@ -116,18 +116,18 @@ install_nvidia() {
     local dist
     dist=$(. /etc/os-release; echo "$ID$VERSION_ID")
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
-        sudo gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+        gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
     curl -s -L "https://nvidia.github.io/libnvidia-container/${dist}/libnvidia-container.list" | \
         sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
-    sudo apt-get update -yq
-    sudo apt-get install -yq nvidia-container-toolkit
+        tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+    apt-get update -yq
+    apt-get install -yq nvidia-container-toolkit
 
     # Load kernel modules
     log "Loading kernel modules..."
-    sudo modprobe -v nvidia 2>&1 || true
-    sudo modprobe -v nvidia_uvm 2>&1 || true
-    sudo modprobe -v nvidia_modeset 2>&1 || true
+    modprobe -v nvidia 2>&1 || true
+    modprobe -v nvidia_uvm 2>&1 || true
+    modprobe -v nvidia_modeset 2>&1 || true
 
     # Show what driver was loaded
     if nvidia-smi > /dev/null 2>&1; then
@@ -138,7 +138,7 @@ install_nvidia() {
         for mod in $(find /lib/modules/$(uname -r) -name 'nvidia*.ko*' 2>/dev/null | head -5); do
             modname=$(basename "$mod" | sed 's/.ko.*//');
             log "  Trying modprobe $modname..."
-            sudo modprobe "$modname" 2>&1 || true
+            modprobe "$modname" 2>&1 || true
         done
         # Final check
         if ! nvidia-smi > /dev/null 2>&1; then
@@ -149,8 +149,8 @@ install_nvidia() {
 
     # Configure Docker nvidia runtime
     log "Configuring Docker NVIDIA runtime..."
-    sudo nvidia-ctk runtime configure --runtime=docker 2>&1
-    sudo systemctl restart docker
+    nvidia-ctk runtime configure --runtime=docker 2>&1
+    systemctl restart docker
     sleep 3
 
     # Show docker runtime config for debugging
@@ -175,17 +175,17 @@ install_nvidia() {
         if [ $((a % 3)) -eq 0 ]; then
             log "  Recovery cycle $a..."
             # Reload all nvidia modules
-            sudo rmmod nvidia_uvm 2>/dev/null || true
-            sudo rmmod nvidia_drm 2>/dev/null || true
-            sudo rmmod nvidia_modeset 2>/dev/null || true
-            sudo rmmod nvidia 2>/dev/null || true
+            rmmod nvidia_uvm 2>/dev/null || true
+            rmmod nvidia_drm 2>/dev/null || true
+            rmmod nvidia_modeset 2>/dev/null || true
+            rmmod nvidia 2>/dev/null || true
             sleep 2
-            sudo modprobe nvidia 2>/dev/null || true
-            sudo modprobe nvidia_uvm 2>/dev/null || true
-            sudo modprobe nvidia_modeset 2>/dev/null || true
+            modprobe nvidia 2>/dev/null || true
+            modprobe nvidia_uvm 2>/dev/null || true
+            modprobe nvidia_modeset 2>/dev/null || true
             # Reconfigure and restart docker
-            sudo nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
-            sudo systemctl restart docker 2>/dev/null || true
+            nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+            systemctl restart docker 2>/dev/null || true
             sleep 5
         fi
         sleep 10
@@ -205,11 +205,11 @@ harden_docker() {
     log "Hardening Docker daemon..."
 
     for u in $(getent group docker 2>/dev/null | cut -d: -f4 | tr ',' ' '); do
-        sudo gpasswd -d "$u" docker 2>/dev/null || true
+        gpasswd -d "$u" docker 2>/dev/null || true
     done
 
-    sudo mkdir -p /etc/docker
-    sudo tee /etc/docker/daemon.json > /dev/null << 'DAEMONJSON'
+    mkdir -p /etc/docker
+    tee /etc/docker/daemon.json > /dev/null << 'DAEMONJSON'
 {
     "icc": false,
     "no-new-privileges": true,
@@ -219,10 +219,10 @@ harden_docker() {
 DAEMONJSON
 
     if command -v nvidia-ctk > /dev/null 2>&1; then
-        sudo nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+        nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
     fi
 
-    sudo systemctl restart docker
+    systemctl restart docker
     log "Docker daemon hardened"
 }
 
@@ -391,10 +391,10 @@ lockdown_docker_cli() {
     log "Locking Docker CLI..."
 
     # Hide real binary
-    sudo mkdir -p "$DOCKER_REAL_DIR"
-    sudo cp /usr/bin/docker "$DOCKER_REAL_BIN"
-    sudo chmod 700 "$DOCKER_REAL_DIR"
-    sudo chmod 700 "$DOCKER_REAL_BIN"
+    mkdir -p "$DOCKER_REAL_DIR"
+    cp /usr/bin/docker "$DOCKER_REAL_BIN"
+    chmod 700 "$DOCKER_REAL_DIR"
+    chmod 700 "$DOCKER_REAL_BIN"
 
     # Save path for watchdog
     cat > /root/.trainer-lockdown << LOCKEOF
