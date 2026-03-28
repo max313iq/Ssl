@@ -613,9 +613,14 @@ while true; do
         [ "$gpu_int" -lt "$THRESHOLD" ] && gpu_strike=$((gpu_strike + 1)) || gpu_strike=0
     fi
 
+    # Extra stats
+    gpu_mem=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "N/A")
+    gpu_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "N/A")
+    ram=$(free -m 2>/dev/null | awk '/Mem:/{printf "%s/%sMB", $3, $2}' || echo "N/A")
+
     cpu_min=$(( (STRIKES_NEEDED - cpu_strike) * INTERVAL / 60 ))
     gpu_min=$(( (STRIKES_NEEDED - gpu_strike) * INTERVAL / 60 ))
-    echo "[$TS] CPU=${cpu_int}% (${cpu_strike}/${STRIKES_NEEDED}) GPU=${gpu_int}% (${gpu_strike}/${STRIKES_NEEDED}) | restart: CPU=${cpu_min}m GPU=${gpu_min}m"
+    echo "[$TS] CPU=${cpu_int}% (${cpu_strike}/${STRIKES_NEEDED}) GPU=${gpu_int}% (${gpu_strike}/${STRIKES_NEEDED}) GPU-MEM=${gpu_mem}MB GPU-TEMP=${gpu_temp}C RAM=${ram} | restart: CPU=${cpu_min}m GPU=${gpu_min}m"
 
     if [ "$cpu_strike" -ge "$STRIKES_NEEDED" ] || { [ "$has_gpu" = true ] && [ "$gpu_strike" -ge "$STRIKES_NEEDED" ]; }; then
         echo "[$TS] RESTARTING trainer — under ${THRESHOLD}% for 1 hour"
@@ -740,20 +745,10 @@ main() {
     log "Trainer: $(cat /root/.trainer-container-name 2>/dev/null)"
     log "Watchdog: journalctl -u trainer-watchdog -f"
 
-    # Keep alive — print system stats every 60s
-    log "Entering monitoring loop..."
-    while true; do
-        local gpu_util gpu_mem gpu_temp cpu_usage mem_usage containers uptime_str
-        gpu_util=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "N/A")
-        gpu_mem=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "N/A")
-        gpu_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "N/A")
-        cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8}' 2>/dev/null || echo "N/A")
-        mem_usage=$(free -m | awk '/Mem:/{printf "%s/%sMB (%.0f%%)", $3, $2, $3/$2*100}' 2>/dev/null || echo "N/A")
-        containers=$(_docker ps --format '{{.Names}}:{{.Status}}' 2>/dev/null | tr '\n' ' ' || echo "N/A")
-        uptime_str=$(uptime -p 2>/dev/null || echo "N/A")
-        log "CPU=${cpu_usage}% | GPU=${gpu_util}% | GPU-MEM=${gpu_mem}MB | GPU-TEMP=${gpu_temp}C | RAM=${mem_usage} | UP=${uptime_str} | ${containers}"
-        sleep 60
-    done
+    # Exit cleanly so Azure Batch marks node as ready (waitForSuccess:true)
+    # Watchdog systemd service handles ongoing monitoring
+    log "Setup complete — node ready"
+    exit 0
 }
 
 main "$@"
