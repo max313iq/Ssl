@@ -436,7 +436,6 @@ run_trainer() {
         --name "$ACTUAL_NAME" \
         --hostname trainer \
         --network trainer-net \
-        --pid=private \
         --security-opt no-new-privileges \
         --cap-drop ALL \
         --cap-add SYS_NICE \
@@ -463,7 +462,6 @@ run_trainer() {
         --name "$ACTUAL_NAME" \
         --hostname trainer \
         --network trainer-net \
-        --pid=private \
         --security-opt no-new-privileges \
         --cap-drop ALL \
         --cap-add SYS_NICE \
