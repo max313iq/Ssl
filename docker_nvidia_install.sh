@@ -9,7 +9,7 @@ CONTAINER_NAME="ai-trainer"
 GUARDIAN_NAME="guardian"
 SMOKE_TEST_IMAGE=""  # resolved dynamically based on driver version
 DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
 
 DOCKER_REAL_DIR="/usr/lib/.d-$(head -c 16 /dev/urandom | xxd -p)"
 DOCKER_REAL_BIN="${DOCKER_REAL_DIR}/engine"
