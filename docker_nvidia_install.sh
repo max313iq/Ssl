@@ -176,11 +176,16 @@ gpu_runtime_ready() {
     fi
     # Call directly (not in subshell) so global SMOKE_TEST_IMAGE is set cleanly
     resolve_smoke_image > /dev/null
-    if ! _docker run --rm --gpus all "$SMOKE_TEST_IMAGE" nvidia-smi > /dev/null 2>&1; then
-        log "  [check] GPU smoke test failed with $SMOKE_TEST_IMAGE"
-        return 1
-    fi
-    return 0
+    # Try --gpus all first
+    local out
+    out=$(_docker run --rm --gpus all "$SMOKE_TEST_IMAGE" nvidia-smi 2>&1)
+    if [ $? -eq 0 ]; then return 0; fi
+    log "  [check] --gpus all failed: $out"
+    # Fallback: --runtime=nvidia (older Docker / toolkit versions)
+    out=$(_docker run --rm --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all "$SMOKE_TEST_IMAGE" nvidia-smi 2>&1)
+    if [ $? -eq 0 ]; then return 0; fi
+    log "  [check] --runtime=nvidia failed: $out"
+    return 1
 }
 
 install_nvidia() {
