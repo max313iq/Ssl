@@ -146,12 +146,20 @@ gpu_runtime_ready() {
 install_nvidia() {
     lspci | grep -i nvidia > /dev/null 2>&1 || { log "No NVIDIA GPU found"; return 1; }
 
-    # Check if a driver is already installed — skip reinstall to avoid slow DKMS/initramfs
-    local existing_drv
+    # Check if driver is installed AND has modules for the running kernel
+    local existing_drv has_modules
     existing_drv=$(dpkg -l 'nvidia-driver-*' 2>/dev/null | awk '/^ii/{print $2}' | head -1)
-    if [ -n "$existing_drv" ]; then
-        log "NVIDIA driver already installed: $existing_drv — skipping driver install"
+    has_modules=$(find /lib/modules/$(uname -r) -name 'nvidia*.ko*' 2>/dev/null | head -1)
+    if [ -n "$existing_drv" ] && [ -n "$has_modules" ]; then
+        log "NVIDIA driver $existing_drv with modules for kernel $(uname -r) — skipping install"
     else
+        # Remove mismatched driver if installed for wrong kernel
+        if [ -n "$existing_drv" ] && [ -z "$has_modules" ]; then
+            log "Driver $existing_drv installed but NO modules for kernel $(uname -r) — reinstalling"
+            wait_for_apt
+            apt-get remove -yq --purge "$existing_drv" 2>&1 || true
+            apt-get autoremove -yq 2>&1 || true
+        fi
         log "Installing NVIDIA drivers..."
         wait_for_apt
         apt-get update -yq
@@ -278,7 +286,6 @@ harden_docker() {
 {
     "icc": false,
     "no-new-privileges": true,
-    "userland-proxy": false,
     "log-driver": "none"
 }
 DAEMONJSON
@@ -288,7 +295,30 @@ DAEMONJSON
     fi
 
     systemctl restart docker
-    log "Docker daemon hardened"
+    # Verify Docker came back — retry if it crashed
+    local r=0
+    while [ $r -lt 3 ] && ! systemctl is-active --quiet docker; do
+        r=$((r + 1))
+        log "Docker failed to start (attempt $r/3) — checking daemon.json..."
+        # Validate JSON
+        if ! python3 -c "import json; json.load(open('/etc/docker/daemon.json'))" 2>/dev/null; then
+            log "Invalid daemon.json — resetting to minimal"
+            echo '{}' > /etc/docker/daemon.json
+        fi
+        systemctl restart docker
+        sleep 3
+    done
+
+    if systemctl is-active --quiet docker; then
+        log "Docker daemon hardened"
+    else
+        log "WARNING: Docker daemon failed — checking journal"
+        journalctl -u docker.service --no-pager -n 10 2>/dev/null || true
+        # Last resort: reset daemon.json and restart
+        echo '{}' > /etc/docker/daemon.json
+        systemctl restart docker
+        sleep 3
+    fi
 }
 
 # ==========================================================
