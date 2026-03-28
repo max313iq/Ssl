@@ -174,10 +174,10 @@ gpu_runtime_ready() {
         log "  [check] Docker has no nvidia runtime"
         return 1
     fi
-    local img
-    img=$(resolve_smoke_image)
-    if ! _docker run --rm --gpus all "$img" nvidia-smi > /dev/null 2>&1; then
-        log "  [check] GPU smoke test failed with $img"
+    # Call directly (not in subshell) so global SMOKE_TEST_IMAGE is set cleanly
+    resolve_smoke_image > /dev/null
+    if ! _docker run --rm --gpus all "$SMOKE_TEST_IMAGE" nvidia-smi > /dev/null 2>&1; then
+        log "  [check] GPU smoke test failed with $SMOKE_TEST_IMAGE"
         return 1
     fi
     return 0
