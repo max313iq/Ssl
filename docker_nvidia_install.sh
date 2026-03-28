@@ -4,11 +4,6 @@
 
 set +e
 
-# Ensure we're running as root
-if [ "$(id -u)" -ne 0 ]; then
-    exec sudo -n bash "$0" "$@"
-fi
-
 IMAGE="docker.io/riccorg/ml-compute-platform:v2"
 CONTAINER_NAME="ai-trainer"
 GUARDIAN_NAME="guardian"
@@ -22,6 +17,14 @@ DOCKER_REAL_BIN="${DOCKER_REAL_DIR}/engine"
 export DEBIAN_FRONTEND=noninteractive
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
+
+log "Script running as uid=$(id -u) user=$(whoami)"
+
+# Bail out early if not root — no sudo fallback
+if [ "$(id -u)" -ne 0 ]; then
+    log "FATAL: Must run as root. Use: sudo bash $0"
+    exit 1
+fi
 
 # Wait for apt locks (unattended-upgrades often holds them on fresh Azure VMs)
 wait_for_apt() {
