@@ -20,10 +20,10 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 log "Script running as uid=$(id -u) user=$(whoami)"
 
-# Bail out early if not root — no sudo fallback
+# Elevate to root if not already
 if [ "$(id -u)" -ne 0 ]; then
-    log "FATAL: Must run as root. Use: sudo bash $0"
-    exit 1
+    log "Not root — elevating with sudo..."
+    exec sudo -n bash "$0" "$@"
 fi
 
 # Wait for apt locks (unattended-upgrades often holds them on fresh Azure VMs)
