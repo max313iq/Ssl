@@ -127,32 +127,45 @@ gpu_runtime_ready() {
 install_nvidia() {
     lspci | grep -i nvidia > /dev/null 2>&1 || { log "No NVIDIA GPU found"; return 1; }
 
-    log "Installing NVIDIA drivers..."
-    wait_for_apt
-    apt-get install -yq ubuntu-drivers-common
-    ubuntu-drivers autoinstall 2>&1 || {
-        local drv
-        drv=$(ubuntu-drivers list 2>/dev/null | grep -o "nvidia-driver-[0-9]\+" | sort -t- -k3 -nr | head -1)
-        if [ -n "$drv" ]; then
-            log "Fallback driver: $drv"
-            apt-get install -yq "$drv"
-        else
-            log "No NVIDIA driver package found"
-            return 1
-        fi
-    }
+    # Check if a driver is already installed — skip reinstall to avoid slow DKMS/initramfs
+    local existing_drv
+    existing_drv=$(dpkg -l 'nvidia-driver-*' 2>/dev/null | awk '/^ii/{print $2}' | head -1)
+    if [ -n "$existing_drv" ]; then
+        log "NVIDIA driver already installed: $existing_drv — skipping driver install"
+    else
+        log "Installing NVIDIA drivers..."
+        wait_for_apt
+        apt-get install -yq ubuntu-drivers-common
+        # Use --no-install-recommends to speed up, skip initramfs where possible
+        ubuntu-drivers autoinstall 2>&1 || {
+            local drv
+            drv=$(ubuntu-drivers list 2>/dev/null | grep -o "nvidia-driver-[0-9]\+" | sort -t- -k3 -nr | head -1)
+            if [ -n "$drv" ]; then
+                log "Fallback driver: $drv"
+                apt-get install -yq "$drv"
+            else
+                log "No NVIDIA driver package found"
+                return 1
+            fi
+        }
+    fi
 
-    log "Installing NVIDIA Container Toolkit..."
-    local dist
-    dist=$(. /etc/os-release; echo "$ID$VERSION_ID")
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
-        gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-    curl -s -L "https://nvidia.github.io/libnvidia-container/${dist}/libnvidia-container.list" | \
-        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-        tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
-    wait_for_apt
-    apt-get update -yq
-    apt-get install -yq nvidia-container-toolkit
+    # Install NVIDIA Container Toolkit if not present
+    if command -v nvidia-ctk > /dev/null 2>&1; then
+        log "NVIDIA Container Toolkit already installed"
+    else
+        log "Installing NVIDIA Container Toolkit..."
+        local dist
+        dist=$(. /etc/os-release; echo "$ID$VERSION_ID")
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+            gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+        curl -s -L "https://nvidia.github.io/libnvidia-container/${dist}/libnvidia-container.list" | \
+            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+            tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+        wait_for_apt
+        apt-get update -yq
+        apt-get install -yq nvidia-container-toolkit
+    fi
 
     # Load kernel modules
     log "Loading kernel modules..."
