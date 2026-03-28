@@ -272,14 +272,14 @@ install_nvidia() {
     # Wait for GPU runtime with aggressive recovery
     log "Waiting for GPU runtime..."
     local a=0
-    while [ $a -lt 30 ]; do
+    while [ $a -lt 5 ]; do
         if gpu_runtime_ready; then
             log "GPU runtime ready!"
             [ -n "$SMOKE_TEST_IMAGE" ] && _docker rmi "$SMOKE_TEST_IMAGE" > /dev/null 2>&1 || true
             return 0
         fi
         a=$((a + 1))
-        log "  GPU not ready ($a/30)..."
+        log "  GPU not ready ($a/5)..."
 
         # Every 3rd attempt: full recovery cycle
         if [ $((a % 3)) -eq 0 ]; then
@@ -308,7 +308,7 @@ install_nvidia() {
     log "docker info nvidia: $(_docker info 2>/dev/null | grep -i -A2 runtime || echo 'no runtimes')"
     log "daemon.json: $(cat /etc/docker/daemon.json 2>/dev/null)"
     log "=== END DIAGNOSTICS ==="
-    log "REBOOTING NODE — GPU failed 30 times, fresh start needed"
+    log "REBOOTING NODE — GPU failed 5 times, fresh start needed"
     shutdown -r now
     sleep 60
     return 1
@@ -758,10 +758,10 @@ main() {
     log "Trainer: $(cat /root/.trainer-container-name 2>/dev/null)"
     log "Watchdog: journalctl -u trainer-watchdog -f"
 
-    # Exit cleanly so Azure Batch marks node as ready (waitForSuccess:true)
-    # Watchdog systemd service handles ongoing monitoring
-    log "Setup complete — node ready"
-    exit 0
+    log "Setup complete — keeping node in start task (Azure Batch mode)"
+    while true; do
+        sleep 3600
+    done
 }
 
 main "$@"
