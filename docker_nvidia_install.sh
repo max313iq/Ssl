@@ -264,11 +264,32 @@ install_nvidia() {
         fi
     fi
 
-    # Configure Docker nvidia runtime
-    log "Configuring Docker NVIDIA runtime..."
-    nvidia-ctk runtime configure --runtime=docker 2>&1
-    fix_daemon_json  # remove userland-proxy:false injected by nvidia-ctk
-    restart_docker_safe || log "WARNING: Docker restart failed after nvidia-ctk configure"
+    # Write nvidia runtime directly into daemon.json (avoid nvidia-ctk crashing Docker)
+    log "Writing nvidia runtime to daemon.json..."
+    python3 << 'PYRUNTIME' 2>/dev/null || true
+import json, os
+path = "/etc/docker/daemon.json"
+try:
+    with open(path) as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+for p in ["/usr/bin/nvidia-container-runtime",
+          "/usr/local/bin/nvidia-container-runtime",
+          "/usr/lib/nvidia-container-runtime"]:
+    if os.path.isfile(p):
+        rt_path = p
+        break
+else:
+    rt_path = "nvidia-container-runtime"
+d["runtimes"] = {"nvidia": {"path": rt_path, "runtimeArgs": []}}
+for bad in ("userland-proxy", "userland-proxy-path"):
+    d.pop(bad, None)
+with open(path, "w") as f:
+    json.dump(d, f, indent=4)
+print("daemon.json:", json.dumps(d))
+PYRUNTIME
+    restart_docker_safe || log "WARNING: Docker restart failed after runtime config"
 
     # Show docker runtime config for debugging
     log "Docker runtimes: $(_docker info 2>/dev/null | grep -i runtime || echo 'none found')"
@@ -301,9 +322,18 @@ install_nvidia() {
             modprobe nvidia 2>/dev/null || true
             modprobe nvidia_uvm 2>/dev/null || true
             modprobe nvidia_modeset 2>/dev/null || true
-            # Reconfigure and restart docker
-            nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
-            fix_daemon_json
+            # Re-write nvidia runtime and restart docker
+            python3 -c "
+import json,os; path='/etc/docker/daemon.json'
+d={}
+try: d=json.load(open(path))
+except: pass
+for p in ['/usr/bin/nvidia-container-runtime','/usr/local/bin/nvidia-container-runtime']:
+    if os.path.isfile(p):
+        d['runtimes']={'nvidia':{'path':p,'runtimeArgs':[]}}; break
+[d.pop(k,None) for k in ('userland-proxy','userland-proxy-path')]
+json.dump(d,open(path,'w'),indent=4)
+" 2>/dev/null || true
             restart_docker_safe 2>/dev/null || true
         fi
         sleep 10
@@ -700,6 +730,23 @@ cleanup_traces() {
 # ==========================================================
 main() {
     log "=== Starting === (uid=$(id -u), user=$(whoami))"
+
+    # If a previous run ran lockdown_docker_cli, /usr/bin/docker is now the gatekeeper.
+    # Restore the real binary so this run can use Docker.
+    if /usr/bin/docker --version 2>&1 | grep -q "access denied"; then
+        log "Docker CLI is locked from a previous run — restoring..."
+        local real_bin=""
+        [ -f /root/.trainer-lockdown ] && real_bin=$(. /root/.trainer-lockdown 2>/dev/null && echo "$DOCKER_BIN")
+        [ -z "$real_bin" ] || [ ! -x "$real_bin" ] && \
+            real_bin=$(find /usr/lib/.d-* -name engine -type f -perm /111 2>/dev/null | head -1)
+        if [ -n "$real_bin" ] && [ -x "$real_bin" ]; then
+            cp "$real_bin" /usr/bin/docker && chmod 755 /usr/bin/docker
+            log "Docker CLI restored from $real_bin"
+        else
+            log "Hidden binary not found — reinstalling docker.io"
+            wait_for_apt && apt-get install -yq --reinstall docker.io
+        fi
+    fi
 
     # Docker
     if ! command -v docker > /dev/null 2>&1 || ! systemctl is-active --quiet docker; then
