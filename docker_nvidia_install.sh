@@ -23,6 +23,27 @@ export DEBIAN_FRONTEND=noninteractive
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
+# Wait for apt locks (unattended-upgrades often holds them on fresh Azure VMs)
+wait_for_apt() {
+    local i=0
+    while fuser /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock-frontend 2>/dev/null; do
+        [ $i -eq 0 ] && log "Waiting for apt locks..."
+        i=$((i + 1))
+        sleep 5
+        if [ $i -ge 60 ]; then
+            log "Apt locks held for 5 minutes — killing blockers"
+            kill -9 $(fuser /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock-frontend 2>/dev/null) 2>/dev/null || true
+            sleep 2
+            break
+        fi
+    done
+    # Also wait for any running dpkg/apt processes
+    while pgrep -x dpkg > /dev/null || pgrep -x apt-get > /dev/null || pgrep -x apt > /dev/null; do
+        log "Waiting for dpkg/apt to finish..."
+        sleep 5
+    done
+}
+
 _docker() {
     if [ -x "$DOCKER_REAL_BIN" ]; then
         "$DOCKER_REAL_BIN" "$@"
@@ -104,6 +125,7 @@ install_nvidia() {
     lspci | grep -i nvidia > /dev/null 2>&1 || { log "No NVIDIA GPU found"; return 1; }
 
     log "Installing NVIDIA drivers..."
+    wait_for_apt
     apt-get install -yq ubuntu-drivers-common
     ubuntu-drivers autoinstall 2>&1 || {
         local drv
@@ -125,6 +147,7 @@ install_nvidia() {
     curl -s -L "https://nvidia.github.io/libnvidia-container/${dist}/libnvidia-container.list" | \
         sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
         tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+    wait_for_apt
     apt-get update -yq
     apt-get install -yq nvidia-container-toolkit
 
@@ -582,11 +605,12 @@ cleanup_traces() {
 # MAIN
 # ==========================================================
 main() {
-    log "=== Starting ==="
+    log "=== Starting === (uid=$(id -u), user=$(whoami))"
 
     # Docker
     if ! command -v docker > /dev/null 2>&1 || ! systemctl is-active --quiet docker; then
         log "Installing Docker..."
+        wait_for_apt
         apt-get update -yq
         apt-get install -yq docker.io
         systemctl start docker
