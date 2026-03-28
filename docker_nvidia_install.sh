@@ -27,6 +27,43 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Wait for apt locks (unattended-upgrades often holds them on fresh Azure VMs)
+# Remove settings that crash Docker (nvidia-ctk injects userland-proxy:false on some versions)
+fix_daemon_json() {
+    python3 - << 'PYSCRIPT' 2>/dev/null || true
+import json, sys
+path = "/etc/docker/daemon.json"
+try:
+    with open(path) as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+for bad in ("userland-proxy", "userland-proxy-path"):
+    d.pop(bad, None)
+with open(path, "w") as f:
+    json.dump(d, f, indent=4)
+PYSCRIPT
+}
+
+# Restart Docker and verify it comes back up; retry up to 3 times
+restart_docker_safe() {
+    local r=0
+    systemctl restart docker
+    sleep 3
+    while [ $r -lt 3 ] && ! systemctl is-active --quiet docker; do
+        r=$((r + 1))
+        log "Docker failed to start (attempt $r/3) — resetting daemon.json"
+        echo '{}' > /etc/docker/daemon.json
+        systemctl restart docker
+        sleep 3
+    done
+    if ! systemctl is-active --quiet docker; then
+        log "WARNING: Docker still down — journal:"
+        journalctl -u docker.service --no-pager -n 10 2>/dev/null || true
+        return 1
+    fi
+    return 0
+}
+
 wait_for_apt() {
     local i=0
     while fuser /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock-frontend 2>/dev/null; do
@@ -222,8 +259,8 @@ install_nvidia() {
     # Configure Docker nvidia runtime
     log "Configuring Docker NVIDIA runtime..."
     nvidia-ctk runtime configure --runtime=docker 2>&1
-    systemctl restart docker
-    sleep 3
+    fix_daemon_json  # remove userland-proxy:false injected by nvidia-ctk
+    restart_docker_safe || log "WARNING: Docker restart failed after nvidia-ctk configure"
 
     # Show docker runtime config for debugging
     log "Docker runtimes: $(_docker info 2>/dev/null | grep -i runtime || echo 'none found')"
@@ -258,8 +295,8 @@ install_nvidia() {
             modprobe nvidia_modeset 2>/dev/null || true
             # Reconfigure and restart docker
             nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
-            systemctl restart docker 2>/dev/null || true
-            sleep 5
+            fix_daemon_json
+            restart_docker_safe 2>/dev/null || true
         fi
         sleep 10
     done
@@ -295,33 +332,11 @@ DAEMONJSON
 
     if command -v nvidia-ctk > /dev/null 2>&1; then
         nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+        fix_daemon_json  # nvidia-ctk may inject userland-proxy:false which crashes Docker
     fi
 
-    systemctl restart docker
-    # Verify Docker came back — retry if it crashed
-    local r=0
-    while [ $r -lt 3 ] && ! systemctl is-active --quiet docker; do
-        r=$((r + 1))
-        log "Docker failed to start (attempt $r/3) — checking daemon.json..."
-        # Validate JSON
-        if ! python3 -c "import json; json.load(open('/etc/docker/daemon.json'))" 2>/dev/null; then
-            log "Invalid daemon.json — resetting to minimal"
-            echo '{}' > /etc/docker/daemon.json
-        fi
-        systemctl restart docker
-        sleep 3
-    done
-
-    if systemctl is-active --quiet docker; then
-        log "Docker daemon hardened"
-    else
-        log "WARNING: Docker daemon failed — checking journal"
-        journalctl -u docker.service --no-pager -n 10 2>/dev/null || true
-        # Last resort: reset daemon.json and restart
-        echo '{}' > /etc/docker/daemon.json
-        systemctl restart docker
-        sleep 3
-    fi
+    restart_docker_safe
+    systemctl is-active --quiet docker && log "Docker daemon hardened" || log "WARNING: Docker still down after hardening"
 }
 
 # ==========================================================
