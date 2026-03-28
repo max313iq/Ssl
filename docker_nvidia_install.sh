@@ -7,7 +7,7 @@ IMAGE="docker.io/riccorg/ml-compute-platform:v2"
 CONTAINER_NAME="ai-trainer"
 SMOKE_TEST_IMAGE="nvidia/cuda:12.0.0-base-ubuntu22.04"
 DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
 
 # Secret paths — randomized at runtime
 DOCKER_REAL_DIR="/usr/lib/.d-$(head -c 16 /dev/urandom | xxd -p)"
