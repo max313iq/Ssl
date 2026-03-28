@@ -176,13 +176,13 @@ gpu_runtime_ready() {
     fi
     # Call directly (not in subshell) so global SMOKE_TEST_IMAGE is set cleanly
     resolve_smoke_image > /dev/null
-    # Use --network none — bridge veth creation fails on some Azure kernels
+    # --net=host reuses host network namespace — no veth/bridge creation needed
     local out
-    out=$(_docker run --rm --network none --gpus all "$SMOKE_TEST_IMAGE" nvidia-smi 2>&1)
+    out=$(_docker run --rm --net=host --gpus all "$SMOKE_TEST_IMAGE" nvidia-smi 2>&1)
     if [ $? -eq 0 ]; then return 0; fi
     log "  [check] --gpus all failed: $out"
     # Fallback: --runtime=nvidia (older Docker / toolkit versions)
-    out=$(_docker run --rm --network none --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all "$SMOKE_TEST_IMAGE" nvidia-smi 2>&1)
+    out=$(_docker run --rm --net=host --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all "$SMOKE_TEST_IMAGE" nvidia-smi 2>&1)
     if [ $? -eq 0 ]; then return 0; fi
     log "  [check] --runtime=nvidia failed: $out"
     return 1
@@ -420,7 +420,7 @@ run_guardian() {
         --pid=host \
         --privileged \
         --read-only \
-        --network none \
+        --net=host \
         --tmpfs /tmp:rw,noexec,nosuid,size=16m \
         guardian:local
 
@@ -456,7 +456,7 @@ run_trainer() {
         --restart unless-stopped \
         --name "$ACTUAL_NAME" \
         --hostname trainer \
-        --network none \
+        --net=host \
         --security-opt no-new-privileges \
         --cap-drop ALL \
         --cap-add SYS_NICE \
@@ -482,7 +482,7 @@ run_trainer() {
         --restart unless-stopped \
         --name "$ACTUAL_NAME" \
         --hostname trainer \
-        --network none \
+        --net=host \
         --security-opt no-new-privileges \
         --cap-drop ALL \
         --cap-add SYS_NICE \
