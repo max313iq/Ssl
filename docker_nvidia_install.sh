@@ -154,6 +154,7 @@ install_nvidia() {
     else
         log "Installing NVIDIA drivers..."
         wait_for_apt
+        apt-get update -yq
         apt-get install -yq ubuntu-drivers-common
         # Use --no-install-recommends to speed up, skip initramfs where possible
         ubuntu-drivers autoinstall 2>&1 || {
