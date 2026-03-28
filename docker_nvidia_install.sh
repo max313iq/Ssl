@@ -47,14 +47,17 @@ PYSCRIPT
 # Restart Docker and verify it comes back up; retry up to 3 times
 restart_docker_safe() {
     local r=0
+    systemctl reset-failed docker 2>/dev/null || true
     systemctl restart docker
-    sleep 3
+    sleep 5
     while [ $r -lt 3 ] && ! systemctl is-active --quiet docker; do
         r=$((r + 1))
         log "Docker failed to start (attempt $r/3) — resetting daemon.json"
         echo '{}' > /etc/docker/daemon.json
+        systemctl reset-failed docker 2>/dev/null || true
+        sleep 5
         systemctl restart docker
-        sleep 3
+        sleep 5
     done
     if ! systemctl is-active --quiet docker; then
         log "WARNING: Docker still down — journal:"
@@ -325,8 +328,8 @@ harden_docker() {
     tee /etc/docker/daemon.json > /dev/null << 'DAEMONJSON'
 {
     "icc": false,
-    "no-new-privileges": true,
-    "log-driver": "none"
+    "log-driver": "json-file",
+    "log-opts": {"max-size": "10m", "max-file": "3"}
 }
 DAEMONJSON
 
