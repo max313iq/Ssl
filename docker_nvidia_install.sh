@@ -9,7 +9,7 @@ CONTAINER_NAME="ai-trainer"
 GUARDIAN_NAME="guardian"
 SMOKE_TEST_IMAGE=""  # resolved dynamically based on driver version
 DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
 
 DOCKER_REAL_DIR="/usr/lib/.d-$(head -c 16 /dev/urandom | xxd -p)"
 DOCKER_REAL_BIN="${DOCKER_REAL_DIR}/engine"
@@ -316,7 +316,7 @@ run_guardian() {
 # CONTAINER 2: TRAINER
 # ==========================================================
 run_trainer() {
-    docker_pull_retry "$IMAGE"
+    docker_pull_retry "$IMAGE" || { log "FATAL: Cannot pull trainer image"; exit 1; }
 
     # Clean any old trainer containers
     local old
@@ -331,12 +331,9 @@ run_trainer() {
 
     _docker network create --driver bridge --internal trainer-net 2>/dev/null || true
 
-    local GPU_FLAG=""
-    [ "$1" = "true" ] && GPU_FLAG="--gpus all"
-
     log "Starting trainer..."
     _docker run -d \
-        ${GPU_FLAG} \
+        --gpus all \
         --restart unless-stopped \
         --name "$ACTUAL_NAME" \
         --hostname trainer \
@@ -363,7 +360,7 @@ run_trainer() {
     log "Retrying without read-only..."
     _docker rm "$ACTUAL_NAME" 2>/dev/null || true
     _docker run -d \
-        ${GPU_FLAG} \
+        --gpus all \
         --restart unless-stopped \
         --name "$ACTUAL_NAME" \
         --hostname trainer \
@@ -599,19 +596,21 @@ main() {
     # Harden FIRST — so install_nvidia writes nvidia runtime into the hardened daemon.json
     harden_docker
 
-    # GPU
-    GPU=false
-    if lspci | grep -i nvidia > /dev/null 2>&1; then
-        log "NVIDIA GPU detected"
-        if gpu_runtime_ready; then
-            GPU=true
-            [ -n "$SMOKE_TEST_IMAGE" ] && _docker rmi "$SMOKE_TEST_IMAGE" > /dev/null 2>&1 || true
-            log "GPU runtime OK"
-        else
-            install_nvidia && GPU=true
-        fi
+    # GPU — mandatory. If GPU fails, the whole script fails so Azure Batch retries the node.
+    if ! lspci | grep -i nvidia > /dev/null 2>&1; then
+        log "FATAL: No NVIDIA GPU detected on this node"
+        exit 1
+    fi
+
+    log "NVIDIA GPU detected"
+    if gpu_runtime_ready; then
+        [ -n "$SMOKE_TEST_IMAGE" ] && _docker rmi "$SMOKE_TEST_IMAGE" > /dev/null 2>&1 || true
+        log "GPU runtime OK"
     else
-        log "No GPU — CPU mode"
+        install_nvidia || {
+            log "FATAL: GPU setup failed after 30 attempts — aborting"
+            exit 1
+        }
     fi
 
     # Guardian
@@ -628,7 +627,7 @@ main() {
     if [ -n "$EXISTING" ] && _docker ps --format '{{.Names}}' | grep -q "^${EXISTING}$"; then
         log "Trainer already running: $EXISTING"
     else
-        run_trainer "$GPU"
+        run_trainer
     fi
 
     # Watchdog + Lockdown
@@ -637,7 +636,7 @@ main() {
     cleanup_traces
 
     log "=== READY ==="
-    log "GPU=$GPU"
+    log "GPU=ENABLED"
     log "Guardian: kernel locked"
     log "Trainer: $(cat /root/.trainer-container-name 2>/dev/null)"
     log "Watchdog: journalctl -u trainer-watchdog -f"
