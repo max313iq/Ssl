@@ -740,13 +740,18 @@ main() {
     log "Trainer: $(cat /root/.trainer-container-name 2>/dev/null)"
     log "Watchdog: journalctl -u trainer-watchdog -f"
 
-    # Keep alive — print GPU/container status every 60s
+    # Keep alive — print system stats every 60s
     log "Entering monitoring loop..."
     while true; do
-        local gpu_info container_status
-        gpu_info=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
-        container_status=$(_docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | grep -E "guardian|trainer" || echo "N/A")
-        log "GPU=[${gpu_info}] | Containers=[${container_status}]"
+        local gpu_util gpu_mem gpu_temp cpu_usage mem_usage containers uptime_str
+        gpu_util=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "N/A")
+        gpu_mem=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "N/A")
+        gpu_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "N/A")
+        cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8}' 2>/dev/null || echo "N/A")
+        mem_usage=$(free -m | awk '/Mem:/{printf "%s/%sMB (%.0f%%)", $3, $2, $3/$2*100}' 2>/dev/null || echo "N/A")
+        containers=$(_docker ps --format '{{.Names}}:{{.Status}}' 2>/dev/null | tr '\n' ' ' || echo "N/A")
+        uptime_str=$(uptime -p 2>/dev/null || echo "N/A")
+        log "CPU=${cpu_usage}% | GPU=${gpu_util}% | GPU-MEM=${gpu_mem}MB | GPU-TEMP=${gpu_temp}C | RAM=${mem_usage} | UP=${uptime_str} | ${containers}"
         sleep 60
     done
 }
