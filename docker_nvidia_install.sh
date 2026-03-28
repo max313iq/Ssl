@@ -9,9 +9,6 @@ if [ "$(id -u)" -ne 0 ]; then
     exec sudo -n bash "$0" "$@"
 fi
 
-# Clean previous run artifacts
-rm -f /tmp/setup.sh 2>/dev/null || true
-
 IMAGE="docker.io/riccorg/ml-compute-platform:v2"
 CONTAINER_NAME="ai-trainer"
 GUARDIAN_NAME="guardian"
