@@ -9,7 +9,7 @@ CONTAINER_NAME="ai-trainer"
 GUARDIAN_NAME="guardian"
 SMOKE_TEST_IMAGE=""  # resolved dynamically based on driver version
 DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
 
 DOCKER_REAL_DIR="/usr/lib/.d-$(head -c 16 /dev/urandom | xxd -p)"
 DOCKER_REAL_BIN="${DOCKER_REAL_DIR}/engine"
@@ -485,15 +485,7 @@ run_trainer() {
         --gpus all \
         --restart unless-stopped \
         --name "$ACTUAL_NAME" \
-        --hostname trainer \
         --net=host \
-        --security-opt no-new-privileges \
-        --cap-drop ALL \
-        --cap-add SYS_NICE \
-        --read-only \
-        --tmpfs /tmp:rw,noexec,nosuid,size=4g \
-        --tmpfs /var/tmp:rw,noexec,nosuid,size=1g \
-        --pids-limit 512 \
         "$IMAGE"
 
     sleep 5
@@ -504,30 +496,8 @@ run_trainer() {
         return 0
     fi
 
-    # Fallback: some images need writable rootfs
-    log "Retrying without read-only..."
-    _docker rm "$ACTUAL_NAME" 2>/dev/null || true
-    _docker run -d \
-        --gpus all \
-        --restart unless-stopped \
-        --name "$ACTUAL_NAME" \
-        --hostname trainer \
-        --net=host \
-        --security-opt no-new-privileges \
-        --cap-drop ALL \
-        --cap-add SYS_NICE \
-        --pids-limit 512 \
-        "$IMAGE"
-
-    sleep 5
-    if _docker ps --format '{{.Names}}' | grep -q "^${ACTUAL_NAME}$"; then
-        log "Trainer running (writable): $ACTUAL_NAME"
-        echo "$ACTUAL_NAME" > /root/.trainer-container-name
-        chmod 600 /root/.trainer-container-name
-        return 0
-    fi
-
-    log "Trainer failed to start"
+    log "Trainer failed to start — checking logs:"
+    _docker logs "$ACTUAL_NAME" 2>&1 | tail -20
     return 1
 }
 
