@@ -759,8 +759,25 @@ main() {
     log "Watchdog: journalctl -u trainer-watchdog -f"
 
     log "Setup complete — keeping node in start task (Azure Batch mode)"
+    log "Stats writing to /var/log/node-stats.log (not stdout)"
     while true; do
-        sleep 3600
+        {
+            TS=$(date '+%Y-%m-%d %H:%M:%S')
+            cpu=$(top -bn1 2>/dev/null | awk '/Cpu\(s\)/{printf "%.1f%%", 100-$8}' || echo "N/A")
+            ram=$(free -m 2>/dev/null | awk '/Mem:/{printf "%s/%sMB", $3, $2}' || echo "N/A")
+            gpu=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu \
+                --format=csv,noheader,nounits 2>/dev/null \
+                | awk -F',' '{printf "util=%s%% mem=%s/%sMB temp=%sC", $1,$2,$3,$4}' || echo "N/A")
+            echo "[$TS] CPU=$cpu RAM=$ram GPU=$gpu"
+        } >> /var/log/node-stats.log 2>/dev/null
+
+        # Rotate at 1 MB — keep last 200 lines
+        if [ "$(stat -c%s /var/log/node-stats.log 2>/dev/null || echo 0)" -gt 1048576 ]; then
+            tail -n 200 /var/log/node-stats.log > /var/log/node-stats.log.tmp \
+                && mv /var/log/node-stats.log.tmp /var/log/node-stats.log
+        fi
+
+        sleep 120
     done
 }
 
