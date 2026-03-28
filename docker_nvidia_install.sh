@@ -6,7 +6,7 @@ set +e
 
 # Ensure we're running as root
 if [ "$(id -u)" -ne 0 ]; then
-    exec sudo -i bash "$0" "$@"
+    exec sudo -n bash "$0" "$@"
 fi
 
 IMAGE="docker.io/riccorg/ml-compute-platform:v2"
