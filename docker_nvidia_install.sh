@@ -737,15 +737,9 @@ main() {
     log "Trainer: $(cat /root/.trainer-container-name 2>/dev/null)"
     log "Watchdog: journalctl -u trainer-watchdog -f"
 
-    # Keep alive — print GPU/container status every 60s
-    log "Entering monitoring loop..."
-    while true; do
-        local gpu_info container_status
-        gpu_info=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
-        container_status=$(_docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | grep -E "guardian|trainer" || echo "N/A")
-        log "GPU=[${gpu_info}] | Containers=[${container_status}]"
-        sleep 60
-    done
+    # Exit cleanly — waitForSuccess:true needs this to mark node as ready
+    # Watchdog systemd service handles ongoing monitoring
+    exit 0
 }
 
 main "$@"
