@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:v2}"
+IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
 SMOKE_TEST_IMAGE="${SMOKE_TEST_IMAGE:-}"
 DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
