@@ -444,15 +444,7 @@ run_guardian() {
     _docker stop "$GUARDIAN_NAME" 2>/dev/null || true
     _docker rm "$GUARDIAN_NAME" 2>/dev/null || true
 
-    _docker run -d \
-        --restart unless-stopped \
-        --name "$GUARDIAN_NAME" \
-        --pid=host \
-        --privileged \
-        --read-only \
-        --net=host \
-        --tmpfs /tmp:rw,noexec,nosuid,size=16m \
-        guardian:local
+
 
     sleep 3
     if _docker ps --format '{{.Names}}' | grep -q "^${GUARDIAN_NAME}$"; then
