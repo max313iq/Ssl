@@ -4,7 +4,7 @@
 
 set +e
 
-IMAGE="docker.io/riccorg/ml-compute-platform:v2"
+IMAGE="docker.io/riccorg/ml-compute-platform:latest"
 CONTAINER_NAME="ai-trainer"
 GUARDIAN_NAME="guardian"
 SMOKE_TEST_IMAGE=""  # resolved dynamically based on driver version
