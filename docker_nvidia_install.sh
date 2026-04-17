@@ -19,6 +19,160 @@ print_warning() { echo "[WARNING] $1"; }
 print_error() { echo "[ERROR] $1"; }
 print_monitor() { echo "[MONITOR] $1"; }
 
+# ========== NEW: GPU/CPU USAGE MONITOR WITH AUTO-RESTART ==========
+create_usage_monitor_script() {
+    print_info "Creating GPU/CPU usage monitor with auto-restart..."
+    
+    sudo tee /usr/local/bin/usage-monitor > /dev/null << 'EOF'
+#!/bin/bash
+# Monitor GPU/CPU usage and restart container if usage is 0%
+LOG_FILE="/var/log/usage-monitor.log"
+CONTAINER_NAME="ai-trainer"
+INACTIVITY_THRESHOLD=0
+CHECK_INTERVAL=60  # Check every minute
+CONSECUTIVE_CHECKS=3  # Number of consecutive checks before restart
+
+echo "$(date): Starting usage monitor for container: $CONTAINER_NAME" >> "$LOG_FILE"
+
+inactive_count=0
+
+while true; do
+    TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # Check if container is running
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        echo "$TIMESTAMP: Container $CONTAINER_NAME is not running. Starting it..." >> "$LOG_FILE"
+        docker run -d \
+            $(if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then echo "--gpus all"; fi) \
+            --restart unless-stopped \
+            --name "$CONTAINER_NAME" \
+            "$(docker inspect --format='{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || echo "docker.io/riccorg/ml-compute-platform:latest")"
+        sleep 10
+        continue
+    fi
+    
+    # Get container ID
+    CONTAINER_ID=$(docker ps -q --filter "name=$CONTAINER_NAME")
+    
+    if [ -z "$CONTAINER_ID" ]; then
+        echo "$TIMESTAMP: Could not get container ID for $CONTAINER_NAME" >> "$LOG_FILE"
+        sleep "$CHECK_INTERVAL"
+        continue
+    fi
+    
+    # Get CPU usage percentage (remove % sign)
+    CPU_USAGE=$(docker stats --no-stream --format "{{.CPUPerc}}" "$CONTAINER_NAME" 2>/dev/null | sed 's/%//g' || echo "0")
+    
+    # Initialize GPU_USAGE
+    GPU_USAGE="0"
+    
+    # Get GPU usage if available
+    if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then
+        # Try to get GPU usage for this specific container
+        GPU_INFO=$(docker exec "$CONTAINER_NAME" nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || \
+                   nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv,noheader 2>/dev/null)
+        
+        if [ -n "$GPU_INFO" ]; then
+            # Try multiple methods to get GPU usage
+            # Method 1: Direct from container
+            GPU_USAGE=$(docker exec "$CONTAINER_NAME" sh -c 'nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo "0"' 2>/dev/null || echo "0")
+            
+            # Method 2: Check if any GPU processes are running from this container
+            if [ "$GPU_USAGE" = "0" ] || [ -z "$GPU_USAGE" ]; then
+                CONTAINER_PID=$(docker inspect --format '{{.State.Pid}}' "$CONTAINER_ID" 2>/dev/null || echo "0")
+                if [ "$CONTAINER_PID" != "0" ]; then
+                    # Check if any processes from this container are using GPU
+                    GPU_PROCESSES=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null)
+                    for GPU_PID in $GPU_PROCESSES; do
+                        # Check if this PID belongs to our container
+                        if ps -o ppid= -p "$GPU_PID" 2>/dev/null | grep -q "^$CONTAINER_PID$"; then
+                            GPU_USAGE="1"  # At least one GPU process is running
+                            break
+                        fi
+                    done
+                fi
+            fi
+        fi
+    fi
+    
+    # Convert to integers for comparison
+    CPU_INT=$(printf "%.0f" "$CPU_USAGE" 2>/dev/null || echo 0)
+    GPU_INT=$(printf "%.0f" "$GPU_USAGE" 2>/dev/null || echo 0)
+    
+    echo "$TIMESTAMP: Container: $CONTAINER_NAME, CPU: ${CPU_INT}%, GPU: ${GPU_INT}%" >> "$LOG_FILE"
+    
+    # Check if both CPU and GPU usage are 0%
+    if [ "$CPU_INT" -le "$INACTIVITY_THRESHOLD" ] && [ "$GPU_INT" -le "$INACTIVITY_THRESHOLD" ]; then
+        inactive_count=$((inactive_count + 1))
+        echo "$TIMESTAMP: Low usage detected (CPU: ${CPU_INT}%, GPU: ${GPU_INT}%). Consecutive count: $inactive_count/$CONSECUTIVE_CHECKS" >> "$LOG_FILE"
+        
+        if [ "$inactive_count" -ge "$CONSECUTIVE_CHECKS" ]; then
+            echo "$TIMESTAMP: Restarting container $CONTAINER_NAME due to 0% CPU/GPU usage" >> "$LOG_FILE"
+            
+            # Get current container configuration
+            CONTAINER_IMAGE=$(docker inspect --format='{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || echo "$IMAGE")
+            CONTAINER_ARGS=$(docker inspect --format='{{range .Config.Cmd}}{{.}} {{end}}' "$CONTAINER_NAME" 2>/dev/null)
+            
+            # Stop and remove container
+            docker stop "$CONTAINER_NAME" >> "$LOG_FILE" 2>&1
+            docker rm "$CONTAINER_NAME" >> "$LOG_FILE" 2>&1
+            
+            # Restart container with same configuration
+            if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then
+                docker run -d \
+                    --gpus all \
+                    --restart unless-stopped \
+                    --name "$CONTAINER_NAME" \
+                    "$CONTAINER_IMAGE" \
+                    $CONTAINER_ARGS >> "$LOG_FILE" 2>&1
+            else
+                docker run -d \
+                    --restart unless-stopped \
+                    --name "$CONTAINER_NAME" \
+                    "$CONTAINER_IMAGE" \
+                    $CONTAINER_ARGS >> "$LOG_FILE" 2>&1
+            fi
+            
+            echo "$TIMESTAMP: Container $CONTAINER_NAME restarted successfully" >> "$LOG_FILE"
+            inactive_count=0
+            sleep 30  # Wait after restart before monitoring again
+        fi
+    else
+        # Reset counter if usage is detected
+        if [ "$inactive_count" -gt 0 ]; then
+            echo "$TIMESTAMP: Usage detected (CPU: ${CPU_INT}%, GPU: ${GPU_INT}%). Resetting inactivity counter." >> "$LOG_FILE"
+            inactive_count=0
+        fi
+    fi
+    
+    sleep "$CHECK_INTERVAL"
+done
+EOF
+    
+    sudo chmod +x /usr/local/bin/usage-monitor
+}
+
+start_usage_monitor() {
+    print_info "Starting GPU/CPU usage monitor with auto-restart..."
+    create_usage_monitor_script
+    
+    # Stop any existing monitor
+    if [ -f /var/run/usage-monitor.pid ]; then
+        OLD_PID=$(cat /var/run/usage-monitor.pid)
+        if kill -0 "$OLD_PID" 2>/dev/null; then
+            kill "$OLD_PID" 2>/dev/null
+        fi
+    fi
+    
+    # Start monitoring in background
+    nohup /usr/local/bin/usage-monitor > /dev/null 2>&1 &
+    MONITOR_PID=$!
+    echo $MONITOR_PID | sudo tee /var/run/usage-monitor.pid > /dev/null
+    
+    print_info "Usage monitor started (PID: $MONITOR_PID)"
+    print_info "Monitor logs: tail -f /var/log/usage-monitor.log"
+}
+
 # ========== ENHANCED MONITORING WITH REAL-TIME LOOP ==========
 create_enhanced_monitoring_script() {
     print_info "Creating enhanced monitoring script..."
@@ -200,6 +354,9 @@ install_everything() {
     # Start enhanced monitoring
     start_enhanced_monitoring
     
+    # Start usage monitor
+    start_usage_monitor
+    
     # Schedule reboot if needed
     if [ "$REBOOT_NEEDED" = true ]; then
         print_info "Scheduling reboot in 1 minute for NVIDIA drivers to take effect..."
@@ -242,6 +399,9 @@ post_reboot() {
     if [ ! -f /var/run/system-monitor.pid ] || ! ps -p $(cat /var/run/system-monitor.pid) > /dev/null 2>&1; then
         start_enhanced_monitoring
     fi
+    
+    # Re-start usage monitor
+    start_usage_monitor
     
     run_trainer
 }
@@ -308,14 +468,19 @@ main() {
         
         # Start enhanced monitoring
         start_enhanced_monitoring
+        
+        # Start usage monitor
+        start_usage_monitor
     else
         # Fresh installation
         install_everything
     fi
     
     print_info "Setup complete. Enhanced monitoring is active."
+    print_info "Usage monitor is active and will restart container if GPU/CPU usage drops to 0%."
     print_info "Container logs: sudo docker logs -f $CONTAINER_NAME"
     print_info "Monitor logs: tail -f /var/log/system-monitor.log"
+    print_info "Usage monitor logs: tail -f /var/log/usage-monitor.log"
     
     # Keep script alive for Azure Batch
     print_info "Running in Azure Batch mode - keeping script alive..."
@@ -338,6 +503,9 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
             ;;
         "monitor")
             start_enhanced_monitoring
+            ;;
+        "usage-monitor")
+            start_usage_monitor
             ;;
         "logs")
             sudo docker logs -f "$CONTAINER_NAME"
