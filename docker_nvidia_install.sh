@@ -7,13 +7,35 @@ set -euo pipefail
 IMAGE="${IMAGE:-docker.io/riccorg/ml-compute-platform:v2}"
 CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
 SMOKE_TEST_IMAGE="${SMOKE_TEST_IMAGE:-}"
-DOCKER_USERNAME="${DOCKER_USERNAME:-}"
-DOCKER_PASSWORD="${DOCKER_PASSWORD:-}"
+DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
 KEEP_ALIVE="${KEEP_ALIVE:-0}"
+STATE_DIR="${STATE_DIR:-/var/lib/azure-batch-trainer}"
+GPU_REBOOT_MARKER="${GPU_REBOOT_MARKER:-${STATE_DIR}/gpu-driver-reboot-requested}"
 
 export DEBIAN_FRONTEND=noninteractive
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
+
+clear_gpu_reboot_marker() {
+    rm -f "$GPU_REBOOT_MARKER" 2>/dev/null || true
+}
+
+reboot_once_for_gpu_driver() {
+    mkdir -p "$STATE_DIR"
+    date '+%Y-%m-%d %H:%M:%S' > "$GPU_REBOOT_MARKER"
+    sync
+
+    log "NVIDIA driver is installed but not active yet - rebooting once to load the kernel driver"
+
+    if command -v systemctl > /dev/null 2>&1; then
+        systemctl reboot || true
+    fi
+    shutdown -r now || reboot || true
+
+    log "Reboot command was issued; exiting so the node can come back cleanly"
+    exit 0
+}
 
 log "Script running as uid=$(id -u) user=$(whoami)"
 
@@ -266,22 +288,22 @@ PYRUNTIME
     fix_daemon_json
     restart_docker_safe || log "WARNING: Docker restart failed after runtime configuration"
 
+    if ! nvidia-smi > /dev/null 2>&1; then
+        if [ ! -f "$GPU_REBOOT_MARKER" ]; then
+            reboot_once_for_gpu_driver
+        fi
+        log "NVIDIA driver is still not active after the reboot attempt"
+    fi
+
     resolve_smoke_image > /dev/null
     docker_pull_retry "$SMOKE_TEST_IMAGE"
 
-    log "Waiting for GPU runtime..."
-    local attempts=0
-    while [ $attempts -lt 5 ]; do
-        if gpu_runtime_ready; then
-            log "GPU runtime ready"
-            docker rmi "$SMOKE_TEST_IMAGE" > /dev/null 2>&1 || true
-            return 0
-        fi
-
-        attempts=$((attempts + 1))
-        log "  GPU not ready ($attempts/5)"
-        sleep 10
-    done
+    if gpu_runtime_ready; then
+        log "GPU runtime ready"
+        docker rmi "$SMOKE_TEST_IMAGE" > /dev/null 2>&1 || true
+        clear_gpu_reboot_marker
+        return 0
+    fi
 
     log "GPU setup diagnostics:"
     log "nvidia-smi: $(nvidia-smi --query-gpu=driver_version,name --format=csv,noheader 2>&1 || echo FAILED)"
@@ -331,6 +353,7 @@ main() {
     log "NVIDIA GPU detected"
     if gpu_runtime_ready; then
         docker rmi "$SMOKE_TEST_IMAGE" > /dev/null 2>&1 || true
+        clear_gpu_reboot_marker
         log "GPU runtime OK"
     else
         install_nvidia || {
