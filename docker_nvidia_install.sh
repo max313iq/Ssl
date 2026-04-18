@@ -9,9 +9,12 @@ CONTAINER_NAME="${CONTAINER_NAME:-ai-trainer}"
 SMOKE_TEST_IMAGE="${SMOKE_TEST_IMAGE:-}"
 DOCKER_USERNAME="${DOCKER_USERNAME:-riccorg}"
 DOCKER_PASSWORD="${DOCKER_PASSWORD:-UL3bJ_5dDcPF7s#}"
-KEEP_ALIVE="${KEEP_ALIVE:-0}"
+KEEP_ALIVE="${KEEP_ALIVE:-1}"
 STATE_DIR="${STATE_DIR:-/var/lib/azure-batch-trainer}"
 GPU_REBOOT_MARKER="${GPU_REBOOT_MARKER:-${STATE_DIR}/gpu-driver-reboot-requested}"
+HEALTHCHECK_START_DELAY_SECONDS="${HEALTHCHECK_START_DELAY_SECONDS:-1800}"
+USAGE_PRINT_INTERVAL_SECONDS="${USAGE_PRINT_INTERVAL_SECONDS:-600}"
+USAGE_SAMPLE_INTERVAL_SECONDS="${USAGE_SAMPLE_INTERVAL_SECONDS:-60}"
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -339,6 +342,161 @@ run_trainer() {
     return 1
 }
 
+container_is_running() {
+    docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"
+}
+
+is_numeric() {
+    [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+is_zero_usage() {
+    awk -v value="$1" 'BEGIN { exit !(value <= 0.01) }'
+}
+
+sum_numbers() {
+    awk -v left="$1" -v right="$2" 'BEGIN { printf "%.4f", left + right }'
+}
+
+format_percent() {
+    awk -v value="$1" 'BEGIN { printf "%.2f%%", value }'
+}
+
+average_percent() {
+    local total="$1"
+    local count="$2"
+
+    if [ "$count" -le 0 ]; then
+        echo "N/A"
+        return
+    fi
+
+    awk -v total="$total" -v count="$count" 'BEGIN { printf "%.2f%%", total / count }'
+}
+
+get_container_cpu_usage() {
+    docker stats --no-stream --format '{{.CPUPerc}}' "$CONTAINER_NAME" 2>/dev/null | head -1 | tr -d '%' | xargs
+}
+
+get_gpu_usage() {
+    nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | \
+        awk 'NF {sum += $1; count += 1} END {if (count > 0) printf "%.2f", sum / count}'
+}
+
+restart_trainer_container() {
+    log "Restarting trainer container: $CONTAINER_NAME"
+    run_trainer
+}
+
+wait_for_healthcheck_delay() {
+    local remaining="$HEALTHCHECK_START_DELAY_SECONDS"
+
+    log "Health checks will begin after a $((HEALTHCHECK_START_DELAY_SECONDS / 60))-minute startup delay"
+
+    while [ "$remaining" -gt 0 ]; do
+        local sleep_for="$USAGE_SAMPLE_INTERVAL_SECONDS"
+
+        if ! container_is_running; then
+            log "Trainer container stopped during the startup delay"
+            return 1
+        fi
+
+        if [ "$remaining" -lt "$sleep_for" ]; then
+            sleep_for="$remaining"
+        fi
+
+        sleep "$sleep_for"
+        remaining=$((remaining - sleep_for))
+    done
+
+    return 0
+}
+
+monitor_trainer_health() {
+    while true; do
+        if ! wait_for_healthcheck_delay; then
+            restart_trainer_container || {
+                log "Trainer restart failed during the startup delay check; retrying in 60 seconds"
+                sleep 60
+            }
+            continue
+        fi
+
+        while true; do
+            local remaining="$USAGE_PRINT_INTERVAL_SECONDS"
+            local sample_count=0
+            local cpu_sum="0"
+            local gpu_sum="0"
+            local cpu_zero_for_window=1
+            local gpu_zero_for_window=1
+            local cpu_usage
+            local gpu_usage
+            local avg_cpu
+            local avg_gpu
+
+            while [ "$remaining" -gt 0 ]; do
+                local sleep_for="$USAGE_SAMPLE_INTERVAL_SECONDS"
+
+                if ! container_is_running; then
+                    log "Trainer container is not running anymore"
+                    break
+                fi
+
+                cpu_usage=$(get_container_cpu_usage)
+                gpu_usage=$(get_gpu_usage)
+
+                if is_numeric "$cpu_usage"; then
+                    cpu_sum=$(sum_numbers "$cpu_sum" "$cpu_usage")
+                    if ! is_zero_usage "$cpu_usage"; then
+                        cpu_zero_for_window=0
+                    fi
+                else
+                    cpu_zero_for_window=0
+                fi
+
+                if is_numeric "$gpu_usage"; then
+                    gpu_sum=$(sum_numbers "$gpu_sum" "$gpu_usage")
+                    if ! is_zero_usage "$gpu_usage"; then
+                        gpu_zero_for_window=0
+                    fi
+                else
+                    gpu_zero_for_window=0
+                fi
+
+                sample_count=$((sample_count + 1))
+
+                if [ "$remaining" -lt "$sleep_for" ]; then
+                    sleep_for="$remaining"
+                fi
+
+                sleep "$sleep_for"
+                remaining=$((remaining - sleep_for))
+            done
+
+            if ! container_is_running; then
+                restart_trainer_container || {
+                    log "Trainer restart failed after container stop; retrying in 60 seconds"
+                    sleep 60
+                }
+                break
+            fi
+
+            avg_cpu=$(average_percent "$cpu_sum" "$sample_count")
+            avg_gpu=$(average_percent "$gpu_sum" "$sample_count")
+            log "Usage over the last $((USAGE_PRINT_INTERVAL_SECONDS / 60)) minutes: CPU=$avg_cpu GPU=$avg_gpu"
+
+            if [ "$cpu_zero_for_window" -eq 1 ] || [ "$gpu_zero_for_window" -eq 1 ]; then
+                log "CPU or GPU stayed at 0% for $((USAGE_PRINT_INTERVAL_SECONDS / 60)) minutes - restarting the trainer container"
+                restart_trainer_container || {
+                    log "Trainer restart failed after idle detection; retrying in 60 seconds"
+                    sleep 60
+                }
+                break
+            fi
+        done
+    done
+}
+
 main() {
     log "=== Starting === (uid=$(id -u), user=$(whoami))"
 
@@ -373,21 +531,8 @@ main() {
     log "  docker exec -it $CONTAINER_NAME bash"
 
     if [ "$KEEP_ALIVE" = "1" ]; then
-        log "KEEP_ALIVE=1, streaming periodic node status"
-        while true; do
-            local ts
-            local cpu
-            local ram
-            local gpu
-            ts=$(date '+%Y-%m-%d %H:%M:%S')
-            cpu=$(top -bn1 2>/dev/null | awk '/Cpu\\(s\\)/{printf "%.1f%%", 100-$8}' || echo "N/A")
-            ram=$(free -m 2>/dev/null | awk '/Mem:/{printf "%s/%sMB", $3, $2}' || echo "N/A")
-            gpu=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu \
-                --format=csv,noheader,nounits 2>/dev/null \
-                | awk -F',' '{printf "util=%s%% mem=%s/%sMB temp=%sC", $1,$2,$3,$4}' || echo "N/A")
-            echo "[$ts] CPU=$cpu RAM=$ram GPU=$gpu"
-            sleep 120
-        done
+        log "KEEP_ALIVE=1, starting container health monitoring"
+        monitor_trainer_health
     fi
 }
 
